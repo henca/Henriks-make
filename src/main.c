@@ -709,7 +709,58 @@ debug_signal_handler (int sig UNUSED)
 {
   db_level = db_level ? DB_NONE : DB_BASIC;
 }
+
+static RETSIGTYPE
+decrease_job_signal_handler (int sig UNUSED)
+{
+  num_jobs_adjustment--;
+}
+
+static RETSIGTYPE
+increase_job_signal_handler (int sig UNUSED)
+{
+  bsd_signal (SIGUSR1, decrease_job_signal_handler);
+  num_jobs_adjustment++;
+}
 #endif
+
+void increase_jobs(void)
+{
+  if (( ! master_job_slots ) && jobserver_setup ( 0 ))
+    {
+      /* make was initially started without -j, needed to start job server */
+      /* Fill in the jobserver_auth for our children.  */
+      jobserver_auth = jobserver_get_auth ();
+
+      if (jobserver_auth)
+        {
+          /* We're using the jobserver so set job_slots to 0.  */
+          master_job_slots = 1;
+          job_slots = 0;
+        }
+    }
+  do
+    {
+      jobserver_release (1);
+      master_job_slots++;
+    }
+  while(num_jobs_adjustment-- > 0);
+  num_jobs_adjustment++;
+  ON (error, NILF, "Increased number of jobs to %d\n", master_job_slots);
+}
+
+void decrease_jobs(void)
+{
+  if (master_job_slots > 1)
+  {
+    master_job_slots--;
+    ON (error, NILF, "Decreased number of jobs to %d\n", master_job_slots);
+  }
+  else
+  {
+    O (error, NILF, "Unable to decrease number of jobs\n");
+  }
+}
 
 static void
 decode_debug_flags (void)
@@ -1884,6 +1935,9 @@ main (int argc, char **argv, char **envp)
   /* Let the user send us SIGUSR1 to toggle the -d flag during the run.  */
 #ifdef SIGUSR1
   bsd_signal (SIGUSR1, debug_signal_handler);
+#endif
+#ifdef SIGUSR2
+  bsd_signal (SIGUSR2, increase_job_signal_handler);
 #endif
 
   /* Define the initial list of suffixes for old-style rules.  */
