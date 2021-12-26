@@ -26,6 +26,10 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 #include "variable.h"
 #include "os.h"
 
+/* These functions are in main.c, there is no main.h */
+extern void increase_jobs(void);
+extern void decrease_jobs(void);
+
 /* Default shell to use.  */
 #ifdef WINDOWS32
 # ifdef HAVE_STRINGS_H
@@ -251,6 +255,7 @@ unsigned long job_counter = 0;
 /* Number of jobserver tokens this instance is currently using.  */
 
 unsigned int jobserver_tokens = 0;
+int num_jobs_adjustment = 0;
 
 
 #ifdef WINDOWS32
@@ -1115,7 +1120,17 @@ free_child (struct child *child)
   /* If we're using the jobserver and this child is not the only outstanding
      job, put a token back into the pipe for it.  */
 
-  if (jobserver_enabled () && jobserver_tokens > 1)
+  if(num_jobs_adjustment > 0)
+  {
+     num_jobs_adjustment--;
+     increase_jobs();
+  }
+  if(num_jobs_adjustment < 0)
+  {
+     num_jobs_adjustment++;
+     decrease_jobs();
+  }
+  else if (jobserver_enabled () && jobserver_tokens > 1)
     {
       jobserver_release (1);
       DB (DB_JOBS, (_("Released token for child %p (%s).\n"),

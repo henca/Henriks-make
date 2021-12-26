@@ -91,3 +91,4 @@ void unblock_all_sigs (void);
 
 extern unsigned int job_slots_used;
 extern unsigned int jobserver_tokens;
+extern int num_jobs_adjustment;
