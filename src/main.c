@@ -746,7 +746,7 @@ void increase_jobs(void)
     }
   while(num_jobs_adjustment-- > 0);
   num_jobs_adjustment++;
-  ON (error, NILF, "Increased number of jobs to %d\n", master_job_slots);
+  ON (error, NILF, "Increased number of jobs to %d\n", (int)master_job_slots);
 }
 
 void decrease_jobs(void)
@@ -754,7 +754,7 @@ void decrease_jobs(void)
   if (master_job_slots > 1)
   {
     master_job_slots--;
-    ON (error, NILF, "Decreased number of jobs to %d\n", master_job_slots);
+    ON (error, NILF, "Decreased number of jobs to %d\n", (int)master_job_slots);
   }
   else
   {
