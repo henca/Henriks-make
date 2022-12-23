@@ -1,0 +1,9 @@
+This repo contains Henriks make which is a fork of GNU make with applied patch
+from bug report #51200 at https://savannah.gnu.org/bugs/index.php?51200
+Even though that patch has been contributed to the bug list it is a feature
+addition rather than a bug fix.
+
+The new feature is that on systems with support for posix signals the make
+process listens for USR2 signal. If such a signal is received the number of
+parallel jobs is increased with 1 and the use of USR1 is changed to decrease
+the number of parallel jobs with 1.
