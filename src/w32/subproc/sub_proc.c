@@ -1,5 +1,5 @@
 /* Process handling for Windows.
-Copyright (C) 1996-2020 Free Software Foundation, Inc.
+Copyright (C) 1996-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,7 +12,7 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 
@@ -92,7 +92,7 @@ DWORD process_wait_for_multiple_objects(
     for (;;) {
       DWORD objectCount = nCount;
       int blockCount  = 0;
-      DWORD retVal;
+      DWORD retVal = 0;
 
       assert(bWaitAll == FALSE); /* This logic only works for this use case */
       assert(dwMilliseconds == 0 || dwMilliseconds == INFINITE); /* No support for timeouts */
@@ -887,7 +887,7 @@ proc_stderr_thread(sub_process *pproc)
 
         for (;;) {
                 if (ReadFile( (HANDLE)pproc->sv_stderr[0], &c, 1, &nread, NULL) == FALSE) {
-                        map_windows32_error_to_string(GetLastError());
+/*                      map_windows32_error_to_string(GetLastError());*/
                         _endthreadex(0);
                 }
                 if (nread == 0)

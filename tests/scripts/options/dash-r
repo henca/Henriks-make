@@ -7,7 +7,7 @@ $details = "DETAILS";
 touch('xxx.c');
 
 # Simple check
-run_make_test('', '-r COMPILE.c=echo xxx.o',
+run_make_test("\n", '-r COMPILE.c=echo xxx.o',
               "#MAKE#: *** No rule to make target 'xxx.o'.  Stop.", 512);
 
 # Make sure we can set it from within the makefile too
@@ -32,5 +32,13 @@ MAKEFLAGS += -R
 all:;$(info CC='$(CC)')
 !,
               '-s', "CC=''");
+
+# sv 62356.
+# Setting -R in MAKEFLAGS sets -r.
+run_make_test(q!
+MAKEFLAGS := -R
+.PHONY: hello.c
+all: hello.o
+!, '', "#MAKE#: *** No rule to make target 'hello.o', needed by 'all'.  Stop.", 512);
 
 1;

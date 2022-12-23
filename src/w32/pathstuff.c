@@ -1,5 +1,5 @@
 /* Path conversion for Windows pathnames.
-Copyright (C) 1996-2020 Free Software Foundation, Inc.
+Copyright (C) 1996-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,7 +12,7 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 #include <string.h>
@@ -100,13 +100,17 @@ w32ify(const char *filename, int resolve)
     char *p;
 
     if (resolve)
-        _fullpath(w32_path, filename, sizeof (w32_path));
+      {
+        char *fp = _fullpath (NULL, filename, sizeof (w32_path));
+        strncpy (w32_path, fp, sizeof (w32_path) - 1);
+        free (fp);
+      }
     else
-        strncpy(w32_path, filename, sizeof (w32_path));
+      strncpy(w32_path, filename, sizeof (w32_path) - 1);
 
     for (p = w32_path; p && *p; p++)
-        if (*p == '\\')
-            *p = '/';
+      if (*p == '\\')
+        *p = '/';
 
     return w32_path;
 }

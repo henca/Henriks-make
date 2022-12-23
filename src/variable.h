@@ -1,5 +1,5 @@
 /* Definitions for using variables in GNU Make.
-Copyright (C) 1988-2020 Free Software Foundation, Inc.
+Copyright (C) 1988-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,9 +12,11 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "hash.h"
+
+struct file;
 
 /* Codes in a variable definition saying where the definition came from.
    Increasing numeric values signify less-overridable definitions.  */
@@ -112,6 +114,7 @@ struct pattern_var
     struct variable variable;
   };
 
+extern unsigned long long env_recursion;
 extern char *variable_buffer;
 extern struct variable_set_list *current_variable_set_list;
 extern struct variable *default_goal_var;
@@ -130,7 +133,7 @@ char *allocated_variable_expand_for_file (const char *line, struct file *file);
   allocated_variable_expand_for_file (line, (struct file *) 0)
 char *expand_argument (const char *str, const char *end);
 char *variable_expand_string (char *line, const char *string, size_t length);
-char *initialize_variable_output ();
+char *initialize_variable_output (void);
 void install_variable_buffer (char **bufp, size_t *lenp);
 void restore_variable_buffer (char *buf, size_t len);
 
@@ -235,7 +238,7 @@ void undefine_variable_in_set (const char *name, size_t length,
                                        (int)(l), (n));                  \
                               }while(0)
 
-char **target_environment (struct file *file);
+char **target_environment (struct file *file, int recursive);
 
 struct pattern_var *create_pattern_var (const char *target,
                                         const char *suffix);

@@ -16,6 +16,7 @@
 #  wait <word>  : wait for a file named <word> to exist
 #  tmout <secs> : Change the timeout for waiting.  Default is 4 seconds.
 #  sleep <secs> : Sleep for <secs> seconds then echo <secs>
+#  term <pid>   : send SIGTERM to PID <pid>
 #  fail <err>   : echo <err> to stdout then exit with error code err
 #
 # If given -q only the "out" command generates output.
@@ -24,7 +25,7 @@
 $| = 1;
 
 my $quiet = 0;
-my $timeout = 4;
+my $timeout = 10;
 
 sub op {
     my ($op, $nm) = @_;
@@ -92,6 +93,12 @@ sub op {
     if ($op eq 'sleep') {
         sleep($nm);
         print "sleep $nm\n" unless $quiet;
+        return 1;
+    }
+
+    if ($op eq 'term') {
+        print "term $nm\n";
+        kill('TERM', $nm);
         return 1;
     }
 

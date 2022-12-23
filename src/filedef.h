@@ -1,5 +1,5 @@
 /* Definition of target file data structures for GNU Make.
-Copyright (C) 1988-2020 Free Software Foundation, Inc.
+Copyright (C) 1988-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,7 +12,7 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 
 /* Structure that represents the info on one file
@@ -84,6 +84,7 @@ struct file
     unsigned int builtin:1;     /* True if the file is a builtin rule. */
     unsigned int precious:1;    /* Non-0 means don't delete file on quit */
     unsigned int loaded:1;      /* True if the file is a loaded object. */
+    unsigned int unloaded:1;    /* True if this loaded object was unloaded. */
     unsigned int low_resolution_time:1; /* Nonzero if this file's time stamp
                                            has only one-second resolution.  */
     unsigned int tried_implicit:1; /* Nonzero if have searched
@@ -108,6 +109,10 @@ struct file
                                    pattern-specific variables.  */
     unsigned int no_diag:1;     /* True if the file failed to update and no
                                    diagnostics has been issued (dontcare). */
+    unsigned int was_shuffled:1; /* Did we already shuffle 'deps'? used when
+                                    --shuffle passes through the graph.  */
+    unsigned int snapped:1;     /* True if the deps of this file have been
+                                   secondary expanded.  */
   };
 
 
@@ -118,6 +123,7 @@ struct file *lookup_file (const char *name);
 struct file *enter_file (const char *name);
 struct dep *split_prereqs (char *prereqstr);
 struct dep *enter_prereqs (struct dep *prereqs, const char *stem);
+void expand_deps (struct file *f);
 struct dep *expand_extra_prereqs (const struct variable *extra);
 void remove_intermediates (int sig);
 void snap_deps (void);
@@ -205,6 +211,8 @@ FILE_TIMESTAMP f_mtime (struct file *file, int search);
 #define ORDINARY_MTIME_MAX ((FILE_TIMESTAMP_S (NEW_MTIME) \
                              << FILE_TIMESTAMP_LO_BITS) \
                             + ORDINARY_MTIME_MIN + FILE_TIMESTAMPS_PER_S - 1)
+
+#define is_ordinary_mtime(_t) ((_t) >= ORDINARY_MTIME_MIN && (_t) <= ORDINARY_MTIME_MAX)
 
 /* Modtime value to use for 'infinitely new'.  We used to get the current time
    from the system and use that whenever we wanted 'new'.  But that causes

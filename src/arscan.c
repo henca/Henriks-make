@@ -1,5 +1,5 @@
 /* Library function for scanning an archive file.
-Copyright (C) 1987-2020 Free Software Foundation, Inc.
+Copyright (C) 1987-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,7 +12,7 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 
@@ -75,9 +75,9 @@ static void *VMS_lib_idx;
 
 static const void *VMS_saved_arg;
 
-static long int (*VMS_function) ();
+static intmax_t (*VMS_function) ();
 
-static long int VMS_function_ret;
+static intmax_t VMS_function_ret;
 
 
 /* This is a callback procedure for lib$get_index */
@@ -203,7 +203,7 @@ VMS_get_member_info(struct dsc$descriptor_s *module, unsigned long *rfa)
    Returns -2 if archive has invalid format.
    Returns 0 if have scanned successfully.  */
 
-long int
+intmax_t
 ar_scan (const char *archive, ar_member_func_t function, const void *varg)
 {
   char *vms_archive;
@@ -376,16 +376,18 @@ struct ar_hdr
 # define   AR_HDR_SIZE  (sizeof (struct ar_hdr))
 #endif
 
+#include "intprops.h"
+
 #include "output.h"
 
 
-static unsigned long int
-parse_int (const char *ptr, const size_t len, const int base,
+static uintmax_t
+parse_int (const char *ptr, const size_t len, const int base, uintmax_t max,
            const char *type, const char *archive, const char *name)
 {
   const char *const ep = ptr + len;
-  const char max = '0' + base - 1;
-  long int val = 0;
+  const int maxchar = '0' + base - 1;
+  uintmax_t val = 0;
 
   /* In all the versions I know of the spaces come last, but be safe.  */
   while (ptr < ep && *ptr == ' ')
@@ -393,10 +395,16 @@ parse_int (const char *ptr, const size_t len, const int base,
 
   while (ptr < ep && *ptr != ' ')
     {
-      if (*ptr < '0' || *ptr > max)
-        OSSS (fatal, NILF, _("Invalid %s for archive %s member %s"),
-                           type, archive, name);
-      val = (val * base) + (*ptr - '0');
+      uintmax_t nv;
+
+      if (*ptr < '0' || *ptr > maxchar)
+        OSSS (fatal, NILF,
+              _("Invalid %s for archive %s member %s"), type, archive, name);
+      nv = (val * base) + (*ptr - '0');
+      if (nv < val || nv > max)
+        OSSS (fatal, NILF,
+              _("Invalid %s for archive %s member %s"), type, archive, name);
+      val = nv;
       ++ptr;
     }
 
@@ -430,7 +438,7 @@ parse_int (const char *ptr, const size_t len, const int base,
    Returns -2 if archive has invalid format.
    Returns 0 if have scanned successfully.  */
 
-long int
+intmax_t
 ar_scan (const char *archive, ar_member_func_t function, const void *arg)
 {
 #ifdef AIAMAG
@@ -441,7 +449,7 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
 # endif
 #endif
   char *namemap = 0;
-  int namemap_size = 0;
+  unsigned int namemap_size = 0;
   int desc = open (archive, O_RDONLY, 0);
   if (desc < 0)
     return -1;
@@ -541,7 +549,7 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
 
     while (1)
       {
-        int nread;
+        ssize_t nread;
         struct ar_hdr member_header;
 #ifdef AIAMAGBIG
         struct ar_hdr_big member_header_big;
@@ -550,7 +558,7 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
 # define ARNAME_MAX 255
         char name[ARNAME_MAX + 1];
         int name_len;
-        long int dateval;
+        intmax_t dateval;
         int uidval, gidval;
         long int data_offset;
 #else
@@ -562,7 +570,9 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
 #endif
         long int eltsize;
         unsigned int eltmode;
-        long int fnval;
+        intmax_t eltdate;
+        int eltuid, eltgid;
+        intmax_t fnval;
         off_t o;
 
         memset(&member_header, '\0', sizeof (member_header));
@@ -593,7 +603,7 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
 
             name[name_len] = '\0';
 
-            sscanf (member_header_big.ar_date, "%12ld", &dateval);
+            sscanf (member_header_big.ar_date, "%12" SCNdMAX, &dateval);
             sscanf (member_header_big.ar_uid, "%12d", &uidval);
             sscanf (member_header_big.ar_gid, "%12d", &gidval);
             sscanf (member_header_big.ar_mode, "%12o", &eltmode);
@@ -621,7 +631,7 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
 
             name[name_len] = '\0';
 
-            sscanf (member_header.ar_date, "%12ld", &dateval);
+            sscanf (member_header.ar_date, "%12" SCNdMAX, &dateval);
             sscanf (member_header.ar_uid, "%12d", &uidval);
             sscanf (member_header.ar_gid, "%12d", &gidval);
             sscanf (member_header.ar_mode, "%12o", &eltmode);
@@ -696,10 +706,11 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
               && (name[0] == ' ' || name[0] == '/')
               && namemap != 0)
             {
-              int name_off = atoi (name + 1);
-              int name_len;
+              const char* err;
+              unsigned int name_off = make_toui (name + 1, &err);
+              size_t name_len;
 
-              if (name_off < 0 || name_off >= namemap_size)
+              if (err|| name_off >= namemap_size)
                 goto invalid;
 
               name = namemap + name_off;
@@ -712,14 +723,15 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
                    && name[1] == '1'
                    && name[2] == '/')
             {
-              int name_len = atoi (name + 3);
+              const char* err;
+              unsigned int name_len = make_toui (name + 3, &err);
 
-              if (name_len < 1)
+              if (err || name_len == 0 || name_len >= MIN (PATH_MAX, INT_MAX))
                 goto invalid;
 
               name = alloca (name_len + 1);
               nread = readbuf (desc, name, name_len);
-              if (nread != name_len)
+              if (nread < 0 || (unsigned int) nread != name_len)
                 goto invalid;
 
               name[name_len] = '\0';
@@ -730,8 +742,16 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
         }
 
 #ifndef M_XENIX
-        eltmode = parse_int (TOCHAR (member_header.ar_mode), sizeof (member_header.ar_mode), 8, "mode", archive, name);
-        eltsize = parse_int (TOCHAR (member_header.ar_size), sizeof (member_header.ar_size), 10, "size", archive, name);
+#define PARSE_INT(_m, _t, _b, _n) \
+        (_t) parse_int (TOCHAR (member_header._m), sizeof (member_header._m), \
+                        _b, TYPE_MAXIMUM (_t), _n, archive, name)
+
+        eltmode = PARSE_INT (ar_mode, unsigned int, 8, "mode");
+        eltsize = PARSE_INT (ar_size, long, 10, "size");
+        eltdate = PARSE_INT (ar_date, intmax_t, 10, "date");
+        eltuid = PARSE_INT (ar_uid, int, 10, "uid");
+        eltgid = PARSE_INT (ar_gid, int, 10, "gid");
+#undef PARSE_INT
 #else   /* Xenix.  */
         eltmode = (unsigned short int) member_header.ar_mode;
         eltsize = member_header.ar_size;
@@ -741,9 +761,7 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
           (*function) (desc, name, ! long_name, member_offset,
                        member_offset + AR_HDR_SIZE, eltsize,
 #ifndef M_XENIX
-                       parse_int (TOCHAR (member_header.ar_date), sizeof (member_header.ar_date), 10, "date", archive, name),
-                       parse_int (TOCHAR (member_header.ar_uid), sizeof (member_header.ar_uid), 10, "uid", archive, name),
-                       parse_int (TOCHAR (member_header.ar_gid), sizeof (member_header.ar_gid), 10, "gid", archive, name),
+                       eltdate, eltuid, eltgid,
 #else   /* Xenix.  */
                        member_header.ar_date,
                        member_header.ar_uid,
@@ -883,10 +901,10 @@ ar_name_equal (const char *name, const char *mem, int truncated)
 
 #ifndef VMS
 /* ARGSUSED */
-static long int
+static intmax_t
 ar_member_pos (int desc UNUSED, const char *mem, int truncated,
                long int hdrpos, long int datapos UNUSED, long int size UNUSED,
-               long int date UNUSED, int uid UNUSED, int gid UNUSED,
+               intmax_t date UNUSED, int uid UNUSED, int gid UNUSED,
                unsigned int mode UNUSED, const void *name)
 {
   if (!ar_name_equal (name, mem, truncated))
@@ -904,12 +922,13 @@ ar_member_pos (int desc UNUSED, const char *mem, int truncated,
 int
 ar_member_touch (const char *arname, const char *memname)
 {
-  long int pos = ar_scan (arname, ar_member_pos, memname);
+  intmax_t pos = ar_scan (arname, ar_member_pos, memname);
+  off_t opos;
   int fd;
   struct ar_hdr ar_hdr;
   off_t o;
   int r;
-  unsigned int ui;
+  int datelen;
   struct stat statbuf;
 
   if (pos < 0)
@@ -917,11 +936,13 @@ ar_member_touch (const char *arname, const char *memname)
   if (!pos)
     return 1;
 
+  opos = (off_t) pos;
+
   EINTRLOOP (fd, open (arname, O_RDWR, 0666));
   if (fd < 0)
     return -3;
   /* Read in this member's header */
-  EINTRLOOP (o, lseek (fd, pos, 0));
+  EINTRLOOP (o, lseek (fd, opos, 0));
   if (o < 0)
     goto lose;
   r = readbuf (fd, &ar_hdr, AR_HDR_SIZE);
@@ -933,15 +954,16 @@ ar_member_touch (const char *arname, const char *memname)
     goto lose;
   /* Advance member's time to that time */
 #if defined(ARFMAG) || defined(ARFZMAG) || defined(AIAMAG) || defined(WINDOWS32)
-  for (ui = 0; ui < sizeof ar_hdr.ar_date; ui++)
-    ar_hdr.ar_date[ui] = ' ';
-  sprintf (TOCHAR (ar_hdr.ar_date), "%lu", (long unsigned) statbuf.st_mtime);
-  ar_hdr.ar_date[strlen ((char *) ar_hdr.ar_date)] = ' ';
+  datelen = snprintf (TOCHAR (ar_hdr.ar_date), sizeof ar_hdr.ar_date,
+                      "%" PRIdMAX, (intmax_t) statbuf.st_mtime);
+  if (! (0 <= datelen && datelen < (int) sizeof ar_hdr.ar_date))
+    goto lose;
+  memset (ar_hdr.ar_date + datelen, ' ', sizeof ar_hdr.ar_date - datelen);
 #else
   ar_hdr.ar_date = statbuf.st_mtime;
 #endif
   /* Write back this member's header */
-  EINTRLOOP (o, lseek (fd, pos, 0));
+  EINTRLOOP (o, lseek (fd, opos, 0));
   if (o < 0)
     goto lose;
   r = writebuf (fd, &ar_hdr, AR_HDR_SIZE);
@@ -960,18 +982,21 @@ ar_member_touch (const char *arname, const char *memname)
 
 #ifdef TEST
 
-long int
+intmax_t
 describe_member (int desc, const char *name, int truncated,
                  long int hdrpos, long int datapos, long int size,
-                 long int date, int uid, int gid, unsigned int mode,
+                 intmax_t date, int uid, int gid, unsigned int mode,
                  const void *arg)
 {
   extern char *ctime ();
+  time_t d = date;
+  char const *ds;
 
   printf (_("Member '%s'%s: %ld bytes at %ld (%ld).\n"),
           name, truncated ? _(" (name might be truncated)") : "",
           size, hdrpos, datapos);
-  printf (_("  Date %s"), ctime (&date));
+  ds = ctime (&d);
+  printf (_("  Date %s"), ds ? ds : "?");
   printf (_("  uid = %d, gid = %d, mode = 0%o.\n"), uid, gid, mode);
 
   return 0;

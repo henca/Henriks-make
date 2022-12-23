@@ -1,7 +1,7 @@
 #!/bin/sh
 # Shell script to build GNU Make in the absence of any 'make' program.
 
-# Copyright (C) 1993-2020 Free Software Foundation, Inc.
+# Copyright (C) 1993-2022 Free Software Foundation, Inc.
 # This file is part of GNU Make.
 #
 # GNU Make is free software; you can redistribute it and/or modify it under
@@ -15,10 +15,15 @@
 # details.
 #
 # You should have received a copy of the GNU General Public License along with
-# this program.  If not, see <http://www.gnu.org/licenses/>.
+# this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Get configure-generated values
 . ./build.cfg
+
+die () { echo "$*" 1>&2; exit 1; }
+usage () { echo "$0 [-k]"; exit $1; }
+
+keep_going=false
 
 : ${OUTDIR:=.}
 OUTLIB="$OUTDIR/lib"
@@ -55,15 +60,29 @@ get_mk_var ()
 # Compile source files.  Object files are put into $objs.
 compile ()
 {
+  success=true
   objs=
   for ofile in "$@"; do
+    # We should try to use a Makefile variable like libgnu_a_SOURCES or
+    # something but just hardcode it.
     file="${ofile%.$OBJEXT}.c"
+    case $file in
+        (lib/libgnu_a-*.c) file="lib/${file#lib/libgnu_a-}" ;;
+    esac
     echo "compiling $file..."
     of="$OUTDIR/$ofile"
-    mkdir -p "${of%/*}"
-    $CC $cflags $CPPFLAGS $CFLAGS -c -o "$of" "$top_srcdir/$file"
+    mkdir -p "${of%/*}" || exit 1
+    if $CC $cflags $CPPFLAGS $CFLAGS -c -o "$of" "$top_srcdir/$file"; then
+        : worked
+    else
+        $keep_going || die "Compilation failed."
+        success=false
+    fi
+
     objs="${objs:+$objs }$of"
   done
+
+  $success
 }
 
 # Use config.status to convert a .in file.  Output file is put into $out.
@@ -75,10 +94,13 @@ convert ()
   var="GENERATE_$(echo $base | tr 'a-z./+' A-Z__X)"
 
   # Is this file disabled?
-  grep "${var}_FALSE\"]=\"\"" config.status >/dev/null && return
+  grep "${var}_FALSE\"]=\"\"" config.status >/dev/null && return 0
+
+  # If there's no .in file then no conversion needed
+  in="$top_srcdir/lib/$(echo ${base%.*}.in.${base##*.} | tr / _)"
+  test -f "$in" || return 0
 
   # Not disabled, so create it
-  in="$top_srcdir/lib/$(echo ${base%.*}.in.${base##*.} | tr / _)"
   out="$OUTLIB/$base"
   mkdir -p "${out%/*}"
 
@@ -122,28 +144,39 @@ done
 # Get object files from the Makefile
 OBJS=$(get_mk_var Makefile make_OBJECTS | sed "s=\$[\(\{]OBJEXT[\)\}]=$OBJEXT=g")
 
-# Exit as soon as any command fails.
-set -e
+while test -n "$1"; do
+    case $1 in
+        (-k) keep_going=true; shift ;;
+        (--) shift; break ;;
+        (-[h?]) usage 0 ;;
+        (-*) echo "Unknown option: $1"; usage 1 ;;
+    esac
+done
+
+test -z "$1" || die "Unknown argument: $*"
 
 # Generate gnulib header files that would normally be created by make
+set -e
 for b in $(get_mk_var lib/Makefile BUILT_SOURCES); do
     convert $b
 done
+set +e
 
 # Build the gnulib library
 cflags="$DEFS -I$OUTLIB -Ilib -I$top_srcdir/lib -I$OUTDIR/src -Isrc -I$top_srcdir/src"
-compile $LIBOBJS
+compile $LIBOBJS || die "Compilation failed."
 
 echo "creating libgnu.a..."
-$AR $ARFLAGS "$OUTLIB"/libgnu.a $objs
+$AR $ARFLAGS "$OUTLIB"/libgnu.a $objs || die "Archive of libgnu failed."
 
 # Compile the source files into those objects.
 cflags="$DEFS $defines -I$OUTDIR/src -Isrc -I$top_srcdir/src -I$OUTLIB -Ilib -I$top_srcdir/lib"
-compile $OBJS
+compile $OBJS || die "Compilation failed."
 
 # Link all the objects together.
 echo "linking make..."
-$CC $CFLAGS $LDFLAGS -L"$OUTLIB" $objs -lgnu $LOADLIBES -o "$OUTDIR/makenew$EXEEXT"
-mv -f "$OUTDIR/makenew$EXEEXT" "$OUTDIR/make$EXEEXT"
+$CC $CFLAGS $LDFLAGS -L"$OUTLIB" -o "$OUTDIR/makenew$EXEEXT" $objs -lgnu $LOADLIBES || die "Link failed."
+
+mv -f "$OUTDIR/makenew$EXEEXT" "$OUTDIR/make$EXEEXT" || exit 1
 
 echo done.

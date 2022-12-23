@@ -1,5 +1,5 @@
 /* Command processing for GNU Make.
-Copyright (C) 1988-2020 Free Software Foundation, Inc.
+Copyright (C) 1988-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,10 +12,11 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 #include "filedef.h"
+#include "os.h"
 #include "dep.h"
 #include "variable.h"
 #include "job.h"
@@ -29,10 +30,6 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 # define FILE_LIST_SEPARATOR (vms_comma_separator ? ',' : ' ')
 #else
 # define FILE_LIST_SEPARATOR ' '
-#endif
-
-#ifndef HAVE_UNISTD_H
-pid_t getpid ();
 #endif
 
 
@@ -58,10 +55,13 @@ dep_hash_cmp (const void *x, const void *y)
   return strcmp (dep_name (dx), dep_name (dy));
 }
 
-/* Set FILE's automatic variables up.  */
+/* Set FILE's automatic variables up.
+ * Use STEM to set $*.
+ * If STEM is 0, then set FILE->STEM and $* to the target name with any
+ * suffix in the .SUFFIXES list stripped off.  */
 
 void
-set_file_variables (struct file *file)
+set_file_variables (struct file *file, const char *stem)
 {
   struct dep *d;
   const char *at, *percent, *star, *less;
@@ -95,7 +95,7 @@ set_file_variables (struct file *file)
     }
 
   /* $* is the stem from an implicit or static pattern rule.  */
-  if (file->stem == 0)
+  if (stem == 0)
     {
       /* In Unix make, $* is set to the target name with
          any suffix in the .SUFFIXES list stripped off for
@@ -118,17 +118,18 @@ set_file_variables (struct file *file)
 
       for (d = enter_file (strcache_add (".SUFFIXES"))->deps; d ; d = d->next)
         {
-          size_t slen = strlen (dep_name (d));
-          if (len > slen && strneq (dep_name (d), name + (len - slen), slen))
+          const char *dn = dep_name (d);
+          size_t slen = strlen (dn);
+          if (len > slen && memcmp (dn, name + (len - slen), slen) == 0)
             {
-              file->stem = strcache_add_len (name, len - slen);
+              file->stem = stem = strcache_add_len (name, len - slen);
               break;
             }
         }
       if (d == 0)
-        file->stem = "";
+        file->stem = stem = "";
     }
-  star = file->stem;
+  star = stem;
 
   /* $< is the first not order-only dependency.  */
   less = "";
@@ -213,8 +214,7 @@ set_file_variables (struct file *file)
 #endif
             len = strlen (c);
 
-          memcpy (cp, c, len);
-          cp += len;
+          cp = mempcpy (cp, c, len);
           *cp++ = FILE_LIST_SEPARATOR;
           if (! (d->changed || always_make_flag))
             qmark_len -= len + 1;       /* Don't space in $? for this one.  */
@@ -284,19 +284,16 @@ set_file_variables (struct file *file)
 
         if (d->ignore_mtime)
           {
-            memcpy (bp, c, len);
-            bp += len;
+            bp = mempcpy (bp, c, len);
             *bp++ = FILE_LIST_SEPARATOR;
           }
         else
           {
-            memcpy (cp, c, len);
-            cp += len;
+            cp = mempcpy (cp, c, len);
             *cp++ = FILE_LIST_SEPARATOR;
             if (d->changed || always_make_flag)
               {
-                memcpy (qp, c, len);
-                qp += len;
+                qp = mempcpy (qp, c, len);
                 *qp++ = FILE_LIST_SEPARATOR;
               }
           }
@@ -325,14 +322,12 @@ set_file_variables (struct file *file)
 void
 chop_commands (struct commands *cmds)
 {
-  unsigned int nlines;
-  unsigned short idx;
+  unsigned short nlines;
+  unsigned short i;
   char **lines;
 
-  /* If we don't have any commands,
-     or we already parsed them, never mind.  */
-
-  if (!cmds || cmds->command_lines != 0)
+  /* If we don't have any commands, or we already parsed them, never mind.  */
+  if (!cmds || cmds->command_lines != NULL)
     return;
 
   /* Chop CMDS->commands up into lines in CMDS->command_lines.  */
@@ -351,25 +346,27 @@ chop_commands (struct commands *cmds)
     }
   else
     {
-      const char *p;
+      const char *p = cmds->commands;
+      size_t max = 5;
 
-      nlines = 5;
-      lines = xmalloc (nlines * sizeof (char *));
-      idx = 0;
-      p = cmds->commands;
+      nlines = 0;
+      lines = xmalloc (max * sizeof (char *));
       while (*p != '\0')
         {
           const char *end = p;
         find_end:;
           end = strchr (end, '\n');
-          if (end == 0)
+          if (end == NULL)
             end = p + strlen (p);
           else if (end > p && end[-1] == '\\')
             {
               int backslash = 1;
-              const char *b;
-              for (b = end - 2; b >= p && *b == '\\'; --b)
-                backslash = !backslash;
+              if (end > p + 1)
+                {
+                  const char *b;
+                  for (b = end - 2; b >= p && *b == '\\'; --b)
+                    backslash = !backslash;
+                }
               if (backslash)
                 {
                   ++end;
@@ -377,40 +374,36 @@ chop_commands (struct commands *cmds)
                 }
             }
 
-          if (idx == nlines)
+          if (nlines == USHRT_MAX)
+            ON (fatal, &cmds->fileinfo,
+                _("Recipe has too many lines (limit %hu)"), nlines);
+
+          if (nlines == max)
             {
-              nlines += 2;
-              lines = xrealloc (lines, nlines * sizeof (char *));
+              max += 2;
+              lines = xrealloc (lines, max * sizeof (char *));
             }
-          lines[idx++] = xstrndup (p, (size_t) (end - p));
+
+          lines[nlines++] = xstrndup (p, (size_t) (end - p));
           p = end;
           if (*p != '\0')
             ++p;
-        }
-
-      if (idx != nlines)
-        {
-          nlines = idx;
-          lines = xrealloc (lines, nlines * sizeof (char *));
         }
     }
 
   /* Finally, set the corresponding CMDS->lines_flags elements and the
      CMDS->any_recurse flag.  */
 
-  if (nlines > USHRT_MAX)
-    ON (fatal, &cmds->fileinfo, _("Recipe has too many lines (%ud)"), nlines);
-
-  cmds->ncommand_lines = (unsigned short)nlines;
+  cmds->ncommand_lines = nlines;
   cmds->command_lines = lines;
 
   cmds->any_recurse = 0;
   cmds->lines_flags = xmalloc (nlines);
 
-  for (idx = 0; idx < nlines; ++idx)
+  for (i = 0; i < nlines; ++i)
     {
       unsigned char flags = 0;
-      const char *p = lines[idx];
+      const char *p = lines[i];
 
       while (ISBLANK (*p) || *p == '-' || *p == '@' || *p == '+')
         switch (*(p++))
@@ -427,12 +420,12 @@ chop_commands (struct commands *cmds)
           }
 
       /* If no explicit '+' was given, look for MAKE variable references.  */
-      if (!(flags & COMMANDS_RECURSE)
+      if (! ANY_SET (flags, COMMANDS_RECURSE)
           && (strstr (p, "$(MAKE)") != 0 || strstr (p, "${MAKE}") != 0))
         flags |= COMMANDS_RECURSE;
 
-      cmds->lines_flags[idx] = flags;
-      cmds->any_recurse |= flags & COMMANDS_RECURSE ? 1 : 0;
+      cmds->lines_flags[i] = flags;
+      cmds->any_recurse |= ANY_SET (flags, COMMANDS_RECURSE) ? 1 : 0;
     }
 }
 
@@ -464,12 +457,17 @@ execute_file_commands (struct file *file)
 
   initialize_file_variables (file, 0);
 
-  set_file_variables (file);
+  set_file_variables (file, file->stem);
 
-  /* If this is a loaded dynamic object, unload it before remaking.
-     Some systems don't support overwriting a loaded object.  */
-  if (file->loaded)
-    unload_file (file->name);
+  /* Some systems don't support overwriting a loaded object so if this one
+     unload it before remaking.  Keep its name in .LOADED: it will be rebuilt
+     and loaded again.  If rebuilding or loading again fail, then we'll exit
+     anyway and it won't matter.  */
+  if (file->loaded && unload_file (file->name) == 0)
+    {
+      file->loaded = 0;
+      file->unloaded = 1;
+    }
 
   /* Start the commands running.  */
   new_job (file);
@@ -478,11 +476,11 @@ execute_file_commands (struct file *file)
 /* This is set while we are inside fatal_error_signal,
    so things can avoid nonreentrant operations.  */
 
-int handling_fatal_signal = 0;
+volatile sig_atomic_t handling_fatal_signal = 0;
 
 /* Handle fatal signals.  */
 
-RETSIGTYPE
+void
 fatal_error_signal (int sig)
 {
 #ifdef __MSDOS__
@@ -530,6 +528,10 @@ fatal_error_signal (int sig)
   /* Set the handling for this signal to the default.
      It is blocked now while we run this handler.  */
   signal (sig, SIG_DFL);
+
+  temp_stdin_unlink ();
+  osync_clear ();
+  jobserver_clear ();
 
   /* A termination signal won't be sent to the entire
      process group, but it means we want to kill the children.  */
@@ -595,7 +597,7 @@ fatal_error_signal (int sig)
 #else
   /* Signal the same code; this time it will really be fatal.  The signal
      will be unblocked when we return and arrive then to kill us.  */
-  if (kill (getpid (), sig) < 0)
+  if (kill (make_pid (), sig) < 0)
     pfatal_with_name ("kill");
 #endif /* not WINDOWS32 */
 #endif /* not Amiga */

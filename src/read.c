@@ -1,5 +1,5 @@
 /* Reading and parsing of makefiles for GNU Make.
-Copyright (C) 1988-2020 Free Software Foundation, Inc.
+Copyright (C) 1988-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,7 +12,7 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 
@@ -144,7 +144,8 @@ static void do_undefine (char *name, enum variable_origin origin,
 static struct variable *do_define (char *name, enum variable_origin origin,
                                    struct ebuffer *ebuf);
 static int conditional_line (char *line, size_t len, const floc *flocp);
-static void check_specials (const struct nameseq *file, int set_default);
+static void check_specials (struct nameseq *filep, int set_default);
+static void check_special_file (struct file *filep, const floc *flocp);
 static void record_files (struct nameseq *filenames, int are_also_makes,
                           const char *pattern,
                           const char *pattern_percent, char *depstr,
@@ -164,9 +165,8 @@ static char *unescape_char (char *string, int c);
 
 
 /* Compare a word, both length and contents.
-   P must point to the word to be tested, and WLEN must be the length.
-*/
-#define word1eq(s)      (wlen == CSTRLEN (s) && strneq (s, p, CSTRLEN (s)))
+   P must point to the word to be tested, and WLEN must be the length.  */
+#define word1eq(s)  (wlen == CSTRLEN (s) && memcmp (s, p, CSTRLEN (s)) == 0)
 
 
 /* Read in all the makefiles and return a chain of targets to rebuild.  */
@@ -373,25 +373,29 @@ eval_makefile (const char *filename, unsigned short flags)
   /* If the makefile wasn't found and it's either a makefile from the
      'MAKEFILES' variable or an included makefile, search the included
      makefile search path for this makefile.  */
-  if (ebuf.fp == NULL && deps->error == ENOENT && (flags & RM_INCLUDED)
-      && *filename != '/' && include_directories)
-    for (const char **dir = include_directories; *dir != NULL; ++dir)
-      {
-        const char *included = concat (3, *dir, "/", filename);
+  if (ebuf.fp == NULL && deps->error == ENOENT && include_directories
+      && ANY_SET (flags, RM_INCLUDED)
+      && !HAS_DRIVESPEC (filename) && !ISDIRSEP (*filename))
+    {
+      const char **dir;
+      for (dir = include_directories; *dir != NULL; ++dir)
+        {
+          const char *included = concat (3, *dir, "/", filename);
 
-        ENULLLOOP(ebuf.fp, fopen (included, "r"));
-        if (ebuf.fp)
-          {
-            filename = included;
-            break;
-          }
-        if (errno != ENOENT)
-          {
-            filename = included;
-            deps->error = errno;
-            break;
-          }
-      }
+          ENULLLOOP(ebuf.fp, fopen (included, "r"));
+          if (ebuf.fp)
+            {
+              filename = included;
+              break;
+            }
+          if (errno != ENOENT)
+            {
+              filename = included;
+              deps->error = errno;
+              break;
+            }
+        }
+    }
 
   /* Enter the final name for this makefile as a goaldep.  */
   filename = strcache_add (filename);
@@ -400,6 +404,7 @@ eval_makefile (const char *filename, unsigned short flags)
     deps->file = enter_file (filename);
   filename = deps->file->name;
   deps->flags = flags;
+  deps->file->is_explicit = 1;
 
   free (expanded);
 
@@ -955,28 +960,38 @@ eval (struct ebuffer *ebuf, int set_default)
               struct nameseq *next = files->next;
               const char *name = files->name;
               struct goaldep *deps;
+              struct file *f;
               int r;
 
-              /* Load the file.  0 means failure.  */
-              r = load_file (&ebuf->floc, &name, noerror);
-              if (! r && ! noerror)
-                OS (fatal, &ebuf->floc, _("%s: failed to load"), name);
+              {
+                struct file file = {0};
+                file.name = name;
+                /* Load the file.  0 means failure.  */
+                r = load_file (&ebuf->floc, &file, noerror);
+                if (! r && ! noerror)
+                  OS (fatal, &ebuf->floc, _("%s: failed to load"), name);
+                name = file.name;
+              }
+
+              f = lookup_file (name);
+              if (!f)
+                f = enter_file (name);
+              f->loaded = 1;
+              f->unloaded = 0;
 
               free_ns (files);
               files = next;
 
-              /* Return of -1 means a special load: don't rebuild it.  */
+              /* Return of -1 means don't ever try to rebuild.  */
               if (r == -1)
                 continue;
 
-              /* It succeeded, so add it to the list "to be rebuilt".  */
+              /* Otherwise add it to the list to be rebuilt.  */
               deps = alloc_goaldep ();
               deps->next = read_files;
+              deps->floc = ebuf->floc;
               read_files = deps;
-              deps->file = lookup_file (name);
-              if (deps->file == 0)
-                deps->file = enter_file (name);
-              deps->file->loaded = 1;
+              deps->file = f;
             }
 
           continue;
@@ -1098,7 +1113,7 @@ eval (struct ebuffer *ebuf, int set_default)
                  Note that the only separators of targets in this context are
                  whitespace and a left paren.  If others are possible, add them
                  to the string in the call to strchr.  */
-              while (colonp && (colonp[1] == '/' || colonp[1] == '\\') &&
+              while (colonp && ISDIRSEP (colonp[1]) &&
                      isalpha ((unsigned char) colonp[-1]) &&
                      (colonp == p2 + 1 || strchr (" \t(", colonp[-2]) != 0))
                 colonp = find_char_unquote (colonp + 1, ':');
@@ -1127,20 +1142,29 @@ eval (struct ebuffer *ebuf, int set_default)
 
         p2 = next_token (variable_buffer);
 
-        /* If the word we're looking at is EOL, see if there's _anything_
-           on the line.  If not, a variable expanded to nothing, so ignore
-           it.  If so, we can't parse this line so punt.  */
+        /* If we're at EOL we didn't find a separator so we don't know what
+           kind of line this is.  */
         if (wtype == w_eol)
           {
+            /* Ignore an empty line.  */
             if (*p2 == '\0')
               continue;
 
-            /* There's no need to be ivory-tower about this: check for
-               one of the most common bugs found in makefiles...  */
+            /* Check for spaces instead of TAB.  */
             if (cmd_prefix == '\t' && strneq (line, "        ", 8))
               O (fatal, fstart, _("missing separator (did you mean TAB instead of 8 spaces?)"));
-            else
-              O (fatal, fstart, _("missing separator"));
+
+            /* Check for conditionals without whitespace afterward.
+               We don't check ifdef/ifndef because there's no real way to miss
+               whitespace there.  */
+            p2 = next_token (line);
+            if (strneq (p2, "if", 2) &&
+                ((strneq (&p2[2], "neq", 3) && !STOP_SET (p2[5], MAP_BLANK))
+                 || (strneq (&p2[2], "eq", 2) && !STOP_SET (p2[4], MAP_BLANK))))
+              O (fatal, fstart, _("missing separator (ifeq/ifneq must be followed by whitespace)"));
+
+            /* No idea...  */
+            O (fatal, fstart, _("missing separator"));
           }
 
         {
@@ -1269,8 +1293,7 @@ eval (struct ebuffer *ebuf, int set_default)
           do {
             check_again = 0;
             /* For DOS-style paths, skip a "C:\..." or a "C:/..." */
-            if (p != 0 && (p[1] == '\\' || p[1] == '/') &&
-                isalpha ((unsigned char)p[-1]) &&
+            if (p != 0 && ISDIRSEP (p[1]) && isalpha ((unsigned char)p[-1]) &&
                 (p == p2 + 1 || strchr (" \t:(", p[-2]) != 0)) {
               p = strchr (p + 1, ':');
               check_again = 1;
@@ -1875,16 +1898,12 @@ record_target_var (struct nameseq *filenames, char *defn,
    and it have been mis-parsed because these special targets haven't been
    considered yet.  */
 
-static void check_specials (const struct nameseq* files, int set_default)
+static void
+check_specials (struct nameseq *files, int set_default)
 {
-  const struct nameseq *t = files;
+  struct nameseq *t;
 
-  /* Unlikely but ...  */
-  if (posix_pedantic && second_expansion && one_shell
-      && (!set_default || default_goal_var->value[0] == '\0'))
-    return;
-
-  for (; t != 0; t = t->next)
+  for (t = files; t != NULL; t = t->next)
     {
       const char* nm = t->name;
 
@@ -1900,6 +1919,7 @@ static void check_specials (const struct nameseq* files, int set_default)
           define_variable_cname ("FC", "fort77", o_default, 0);
           define_variable_cname ("FFLAGS", "-O1", o_default, 0);
           define_variable_cname ("SCCSGETFLAGS", "-s", o_default, 0);
+          define_variable_cname ("ARFLAGS", "-rv", o_default, 0);
           continue;
         }
 
@@ -1966,6 +1986,34 @@ static void check_specials (const struct nameseq* files, int set_default)
             define_variable_global (".DEFAULT_GOAL", 13, t->name,
                                     o_file, 0, NILF);
         }
+    }
+}
+
+/* Check for special targets.  We used to do this in record_files() but that's
+   too late: by the time we get there we'll have already parsed the next line
+   and it have been mis-parsed because these special targets haven't been
+   considered yet.  */
+
+static void
+check_special_file (struct file *file, const floc *flocp)
+{
+  if (streq (file->name, ".WAIT"))
+    {
+      static unsigned int wpre = 0, wcmd = 0;
+
+      if (!wpre && file->deps)
+        {
+          O (error, flocp, _(".WAIT should not have prerequisites"));
+          wpre = 1;
+        }
+
+      if (!wcmd && file->cmds)
+        {
+          O (error, flocp, _(".WAIT should not have commands"));
+          wcmd = 1;
+        }
+
+      return;
     }
 }
 
@@ -2255,6 +2303,8 @@ record_files (struct nameseq *filenames, int are_also_makes,
         }
 
       name = f->name;
+
+      check_special_file (f, flocp);
 
       /* All done!  Set up for the next one.  */
       if (nextf == 0)
@@ -3034,7 +3084,7 @@ construct_include_path (const char **arg_dirs)
     do_variable_definition (NILF, ".INCLUDE_DIRS", *cpp,
                             o_default, f_append, 0);
 
-  free (include_directories);
+  free ((void *) include_directories);
   include_directories = dirs;
 }
 
@@ -3044,7 +3094,7 @@ construct_include_path (const char **arg_dirs)
 char *
 tilde_expand (const char *name)
 {
-#ifndef VMS
+#if !defined(VMS)
   if (name[1] == '/' || name[1] == '\0')
     {
       char *home_dir;
@@ -3099,8 +3149,9 @@ tilde_expand (const char *name)
         {
           if (userend == 0)
             return xstrdup (pwent->pw_dir);
-          else
-            return xstrdup (concat (3, pwent->pw_dir, "/", userend + 1));
+
+          *userend = '/';
+          return xstrdup (concat (3, pwent->pw_dir, "/", userend + 1));
         }
       else if (userend != 0)
         *userend = '/';
@@ -3133,6 +3184,8 @@ tilde_expand (const char *name)
         PARSEFS_EXISTS  - Only return globbed files that actually exist
                           (cannot also set NOGLOB)
         PARSEFS_NOCACHE - Do not add filenames to the strcache (caller frees)
+        PARSEFS_ONEWORD - Don't break the sequence on whitespace
+        PARSEFS_WAIT    - Assume struct dep and handle .WAIT
   */
 
 void *
@@ -3148,16 +3201,22 @@ parse_file_seq (char **stringp, size_t size, int stopmap,
   struct nameseq *new = 0;
   struct nameseq **newp = &new;
 #define NEWELT(_n)  do { \
-                        const char *__n = (_n); \
-                        *newp = xcalloc (size); \
-                        (*newp)->name = (cachep ? strcache_add (__n) : xstrdup (__n)); \
-                        newp = &(*newp)->next; \
+                        struct nameseq *_ns = xcalloc (size);       \
+                        const char *__n = (_n);                     \
+                        _ns->name = (cachep ? strcache_add (__n) : xstrdup (__n)); \
+                        if (found_wait) {                           \
+                          ((struct dep*)_ns)->wait_here = 1;        \
+                          found_wait = 0;                           \
+                        }                                           \
+                        *newp = _ns;                                \
+                        newp = &_ns->next;                          \
                     } while(0)
 
   char *p;
   glob_t gl;
   char *tp;
   int findmap = stopmap|MAP_VMSCOMMA|MAP_NUL;
+  int found_wait = 0;
 
   if (NONE_SET (flags, PARSEFS_ONEWORD))
     findmap |= MAP_BLANK;
@@ -3224,12 +3283,20 @@ parse_file_seq (char **stringp, size_t size, int stopmap,
          Tokens separated by spaces are treated as separate paths since make
          doesn't allow path names with spaces.  */
       if (p && p == s+1 && p[0] == ':'
-          && isalpha ((unsigned char)s[0]) && STOP_SET (p[1], MAP_DIRSEP))
+          && isalpha ((unsigned char)s[0]) && ISDIRSEP (p[1]))
         p = find_map_unquote (p+1, findmap);
 #endif
 
       if (!p)
         p = s + strlen (s);
+
+      if (ANY_SET (flags, PARSEFS_WAIT) && p - s == CSTRLEN (".WAIT")
+          && memcmp (s, ".WAIT", CSTRLEN (".WAIT")) == 0)
+        {
+          /* Note that we found a .WAIT for the next dep but skip it.  */
+          found_wait = 1;
+          continue;
+        }
 
       /* Strip leading "this directory" references.  */
       if (NONE_SET (flags, PARSEFS_NOSTRIP))

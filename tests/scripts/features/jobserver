@@ -14,6 +14,7 @@ if (!$parallel_jobs) {
 
 # Shorthand
 my $np = '--no-print-directory';
+my $j1err = "warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.";
 
 # Simple test of MAKEFLAGS settings
 run_make_test(q!
@@ -82,23 +83,31 @@ unlink('inc.mk');
 # Test recursion which is hidden from make.
 # See Savannah bug #39934
 # Or Red Hat bug https://bugzilla.redhat.com/show_bug.cgi?id=885474
-# Windows doesn't use a pipe, and doesn't close access, so this won't happen.
+# Environments that don't use a pipe won't close access, so this won't happen.
 if ($port_type ne 'W32') {
-    open(MAKEFILE,"> Makefile2");
-    print MAKEFILE '
-    vpath %.c ../
-    foo:
-    ';
-    close(MAKEFILE);
+    create_file('Makefile2', "vpath %.c ../\n", "foo:\n");
 
     run_make_test(q!
 default: ; @ #MAKEPATH# -f Makefile2
 !,
-              "-j2 $np",
-"#MAKE#[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+              "--jobserver-style=pipe -j2 $np",
+"#MAKE#[1]: $j1err
 #MAKE#[1]: Nothing to be done for 'foo'.");
 
     rmfiles('Makefile2');
+}
+
+# For Windows and named pipes, we don't need to worry about recursion
+if ($port_type eq 'W32' || exists $FEATURES{'jobserver-fifo'}) {
+  create_file('Makefile2', "vpath %.c ../\n", "foo:\n");
+
+  run_make_test(q!
+default: ; @ #MAKEPATH# -f Makefile2
+!,
+              "-j2 $np",
+"#MAKE#[1]: Nothing to be done for 'foo'.");
+
+  rmfiles('Makefile2');
 }
 
 # Ensure enter/leave directory messages appear before jobserver warnings
@@ -113,5 +122,44 @@ recurse: ; @echo hi
 hi
 #MAKE#[1]: Leaving directory '#PWD#'
 #MAKE#: Leaving directory '#PWD#'\n");
+
+# Check for invalid jobserver-style options
+
+run_make_test(q!
+all: a
+all a: ; @echo $@
+!,
+              '--jobserver-style=foo -j8',
+              "#MAKE#: *** unknown jobserver auth style 'foo'.  Stop.", 512);
+
+if (exists $FEATURES{'jobserver-fifo'}) {
+  # sv 62908.
+  # Test that when mkfifo fails, make switches to pipe and succeeds.
+  # Force mkfifo to fail by attempting to create a fifo in a non existent
+  # directory.
+  # run_make_test does not allow matching a multiline pattern, therefore run
+  # the test twice.
+  # First time look for /$ERR_no_such_file/ to ensure mkfifo failed.
+  # Second time look for /Nothing to be done/ to ensure make succeeded.
+  $ENV{TMPDIR} = "nosuchdir";
+  run_make_test("all:\n", '-j2', "/$ERR_no_such_file/");
+
+  $ENV{TMPDIR} = "nosuchdir";
+  run_make_test(undef, '-j2', "/Nothing to be done/");
+
+  # Verify that MAKE_TMPDIR is preferred if provided
+  $ENV{MAKE_TMPDIR} = '.';
+  $ENV{TMPDIR} = 'nosuchdir';
+
+  run_make_test(q!
+recurse: ; @$(MAKE) -f #MAKEFILE# all
+all:;@echo "$$MAKEFLAGS"
+!,
+              "-j2 --no-print-directory", "/--jobserver-auth=fifo:\\./");
+
+  # Verify we fall back to -j1 but continue, of the auth is bad.
+  $ENV{MAKEFLAGS} = '-j2 --jobserver-auth=fifo:nosuchfile';
+  run_make_test(q!all:;@echo hi!, "", "#MAKE#: cannot open jobserver nosuchfile: $ERR_no_such_file\n#MAKE#: $j1err\nhi\n");
+}
 
 1;

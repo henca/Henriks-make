@@ -1,7 +1,7 @@
 /* --------------- Moved here from job.c ---------------
    This file must be #included in job.c, as it accesses static functions.
 
-Copyright (C) 1996-2020 Free Software Foundation, Inc.
+Copyright (C) 1996-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -14,7 +14,7 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include <string.h>
 #include <descrip.h>
@@ -1241,11 +1241,8 @@ child_execute_job (struct childbase *child, int good_stdin UNUSED, char *argv)
       FILE *outfile;
       int cmd_len;
 
-      outfile = get_tmpfile (&child->comname,
-                             "sys$scratch:gnv$make_cmdXXXXXX.com");
-      /*                      123456789012345678901234567890 */
-      if (outfile == 0)
-        pfatal_with_name (_("fopen (temporary file)"));
+      outfile = get_tmpfile (&child->comname);
+
       comnamelen = strlen (child->comname);
 
       /* The whole DCL "script" is executed as one action, and it behaves as

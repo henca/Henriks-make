@@ -1,6 +1,6 @@
 # This is a -*-Makefile-*-, or close enough
 #
-# Copyright (C) 1997-2020 Free Software Foundation, Inc.
+# Copyright (C) 1997-2022 Free Software Foundation, Inc.
 # This file is part of GNU Make.
 #
 # GNU Make is free software; you can redistribute it and/or modify it under
@@ -14,7 +14,7 @@
 # details.
 #
 # You should have received a copy of the GNU General Public License along with
-# this program.  If not, see <http://www.gnu.org/licenses/>.
+# this program.  If not, see <https://www.gnu.org/licenses/>.
 
 AUTOMAKE_OPTIONS = dist-lzip silent-rules std-options subdir-objects nostdinc
 ACLOCAL_AMFLAGS = -I m4
@@ -35,8 +35,9 @@ make_SRCS =	src/ar.c src/arscan.c src/commands.c src/commands.h \
 		src/hash.c src/hash.h src/implicit.c src/job.c src/job.h \
 		src/load.c src/loadapi.c src/main.c src/makeint.h src/misc.c \
 		src/os.h src/output.c src/output.h src/read.c src/remake.c \
-		src/rule.c src/rule.h src/signame.c src/strcache.c \
-		src/variable.c src/variable.h src/version.c src/vpath.c
+		src/rule.c src/rule.h src/shuffle.h src/shuffle.c \
+		src/signame.c src/strcache.c src/variable.c src/variable.h \
+		src/version.c src/vpath.c
 
 w32_SRCS =	src/w32/pathstuff.c src/w32/w32os.c src/w32/compat/dirent.c \
 		src/w32/compat/posixfcn.c src/w32/include/dirent.h \
@@ -110,8 +111,8 @@ test_FILES =	tests/run_make_tests tests/run_make_tests.bat \
 		tests/mkshadow tests/thelp.pl tests/guile.supp tests/README
 # test/scripts are added via dist-hook below.
 
-EXTRA_DIST =	ChangeLog README build.sh build.cfg.in $(man_MANS) \
-		README.customs README.OS2 \
+EXTRA_DIST =	ChangeLog INSTALL README build.sh build.cfg.in $(man_MANS) \
+		src/mkconfig.h README.customs README.OS2 \
 		README.Amiga SCOPTIONS src/config.ami \
 		README.DOS builddos.bat src/configh.dos \
 		README.W32 build_w32.bat src/config.h.W32 \
@@ -136,14 +137,14 @@ src/gmk-default.h: $(top_srcdir)/src/gmk-default.scm
 dist-hook:
 	(cd $(top_srcdir); \
 	 sub=`find tests/scripts -follow \( -name .git -o -name .deps -o -name work -o -name .gitignore -o -name \*.orig -o -name \*.rej -o -name \*~ -o -name \*.out -o -name Makefile \) -prune -o -type f -print`; \
-	 tar chf - $$sub) \
-	| (cd $(distdir); tar xfBp -)
+	 $(AMTAR) chf - $$sub) \
+	| (cd $(distdir); $(AMTAR) xfBp -)
 
 
 # --------------- Local CHECK Section
 
 check-local: check-regression
-	@banner=" Regression PASSED: GNU Make $(VERSION) ($(MAKE_HOST)) built with $(CC) "; \
+	@banner=" Regression PASSED: $(PACKAGE_STRING) ($(MAKE_HOST)) built with $(CC) "; \
 	dashes=`echo "$$banner" | sed s/./=/g`; \
 	echo; \
 	echo "$$dashes"; \
@@ -161,7 +162,24 @@ MAKETESTFLAGS =
 
 .PHONY: check-regression
 
+GMK_OUTDIR = ..
+
+testlog = test-suite.log
+testresult = tests/.test-result
+errorpre = makeerror-$(PACKAGE_VERSION)-$(host_triplet)
+
+testfiles = $(testlog) $(testresult) $(errorfile)
+MOSTLYCLEANFILES = $(testfiles)
+
+errordetails = config.status config.log src/config.h $(testlog) tests/work
+
+# Create a 4-letter random sequence
+rand_value = c = "abcdefghijklmnopqrstuvwxyz0123456789"
+rand_char  = substr(c,int(rand()*36),1)
+rand_string = $(AWK) 'BEGIN{srand(); $(rand_value); print $(rand_char) "" $(rand_char) "" $(rand_char) "" $(rand_char);}'
+
 check-regression: tests/config-flags.pm
+	@rm -f $(testfiles)
 	@if test -f '$(top_srcdir)/tests/run_make_tests'; then \
 	  ulimit -n 128; \
 	  if $(PERL) -v >/dev/null 2>&1; then \
@@ -169,17 +187,26 @@ check-regression: tests/config-flags.pm
 	      *) test -d tests || mkdir tests; \
 		 rm -f srctests; \
 		 if ln -s '$(top_srcdir)/tests' srctests; then \
-		   for f in run_make_tests run_make_tests.pl test_driver.pl scripts jhelp.pl; do \
+		   for f in run_make_tests run_make_tests.pl test_driver.pl scripts thelp.pl; do \
 		     rm -f tests/$$f; ln -s ../srctests/$$f tests; \
 		   done; fi ;; \
 	    esac; \
-	    echo "cd tests && $(PERL) $(PERLFLAGS) ./run_make_tests.pl -srcdir $(abs_top_srcdir) -make ../make$(EXEEXT) $(MAKETESTFLAGS)"; \
-	    cd tests && $(PERL) $(PERLFLAGS) ./run_make_tests.pl -srcdir '$(abs_top_srcdir)' -make '../make$(EXEEXT)' $(MAKETESTFLAGS); \
+	    echo "cd tests && $(PERL) $(PERLFLAGS) ./run_make_tests.pl -srcdir $(abs_top_srcdir) -make $(GMK_OUTDIR)/make$(EXEEXT) $(MAKETESTFLAGS)"; \
+	    (cd tests && $(PERL) $(PERLFLAGS) ./run_make_tests.pl -srcdir '$(abs_top_srcdir)' -make '$(GMK_OUTDIR)/make$(EXEEXT)' $(MAKETESTFLAGS); echo $$? >.test-result) 2>&1 | tee $(testlog); \
+	    er=$$(cat $(testresult)); if test "$$er" -ne 0; then \
+	      dirnm="$(errorpre)-$$($(rand_string))"; fnm="$$dirnm.tar.gz"; \
+	      rm -rf "$$dirnm"; mkdir "$$dirnm"; \
+	      $(AMTAR) chf - $(errordetails) | (cd "$$dirnm"; $(AMTAR) xf -); \
+	      $(AMTAR) chf - "$$dirnm" | eval GZIP= gzip $(GZIP_ENV) -c >"$$fnm"; \
+	      echo "*** Testing FAILED!  Details: $$fnm"; \
+	      echo '*** Please report to <$(PACKAGE_BUGREPORT)>'; echo; \
+	      exit $$er; \
+	    fi; \
 	  else \
 	    echo "Can't find a working Perl ($(PERL)); the test suite requires Perl."; \
 	  fi; \
 	else \
-	  echo "Can't find the GNU Make test suite ($(top_srcdir)/tests)."; \
+	  echo "Can't find the $(PACKAGE_NAME) test suite ($(top_srcdir)/tests)."; \
 	fi
 
 

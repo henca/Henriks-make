@@ -1,5 +1,5 @@
 /* Builtin function expansion for GNU Make.
-Copyright (C) 1988-2020 Free Software Foundation, Inc.
+Copyright (C) 1988-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,7 +12,7 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 #include "filedef.h"
@@ -40,6 +40,7 @@ struct function_table_entry
     unsigned char maximum_args;
     unsigned int expand_args:1;
     unsigned int alloc_fn:1;
+    unsigned int adds_command:1;
   };
 
 static unsigned long
@@ -737,14 +738,14 @@ func_lastword (char *o, char **argv, const char *funcname UNUSED)
 static char *
 func_words (char *o, char **argv, const char *funcname UNUSED)
 {
-  int i = 0;
+  unsigned int i = 0;
   const char *word_iterator = argv[0];
-  char buf[20];
+  char buf[INTSTR_LENGTH];
 
   while (find_next_token (&word_iterator, NULL) != 0)
     ++i;
 
-  sprintf (buf, "%d", i);
+  sprintf (buf, "%u", i);
   o = variable_buffer_output (o, buf, strlen (buf));
 
   return o;
@@ -815,20 +816,18 @@ func_word (char *o, char **argv, const char *funcname UNUSED)
 static char *
 func_wordlist (char *o, char **argv, const char *funcname UNUSED)
 {
+  char buf[INTSTR_LENGTH + 1];
   long long start, stop, count;
+  const char* badfirst = _("invalid first argument to 'wordlist' function");
+  const char* badsecond = _("invalid second argument to 'wordlist' function");
 
-  start = parse_numeric (argv[0],
-                         _("invalid first argument to 'wordlist' function"));
-  stop = parse_numeric (argv[1],
-                        _("invalid second argument to 'wordlist' function"));
-
+  start = parse_numeric (argv[0], badfirst);
   if (start < 1)
-    ON (fatal, *expanding_var,
-        "invalid first argument to 'wordlist' function: '%lld'", start);
+    OSS (fatal, *expanding_var, "%s: '%s'", badfirst, make_lltoa (start, buf));
 
+  stop = parse_numeric (argv[1], badsecond);
   if (stop < 0)
-    ON (fatal, *expanding_var,
-        "invalid second argument to 'wordlist' function: '%lld'", stop);
+    OSS (fatal, *expanding_var, "%s: '%s'", badsecond, make_lltoa (stop, buf));
 
   count = stop - start + 1;
 
@@ -986,11 +985,13 @@ a_word_hash_2 (const void *key)
 static int
 a_word_hash_cmp (const void *x, const void *y)
 {
-  int result = (int) ((struct a_word const *) x)->length - ((struct a_word const *) y)->length;
-  if (result)
-    return result;
-  return_STRING_COMPARE (((struct a_word const *) x)->str,
-                         ((struct a_word const *) y)->str);
+  const struct a_word *ax = x;
+  const struct a_word *ay = y;
+
+  if (ax->length != ay->length)
+    return ax->length > ay->length ? 1 : -1;
+
+  return_STRING_N_COMPARE (ax->str, ay->str, ax->length);
 }
 
 struct a_pattern
@@ -1009,7 +1010,7 @@ func_filter_filterout (char *o, char **argv, const char *funcname)
   struct a_pattern *patterns;
   struct a_pattern *pat_end;
   struct a_pattern *pp;
-  size_t pat_count = 0, word_count = 0;
+  unsigned long pat_count = 0, word_count = 0;
 
   struct hash_table a_word_table;
   int is_filter = funcname[CSTRLEN ("filter")] == '\0';
@@ -1109,7 +1110,7 @@ func_filter_filterout (char *o, char **argv, const char *funcname)
       else
         for (wp = words; wp < word_end; ++wp)
           wp->matched |= (wp->length == pp->length
-                          && strneq (pp->str, wp->str, wp->length));
+                          && memcmp (pp->str, wp->str, wp->length) == 0);
     }
 
   /* Output the words that matched (or didn't, for filter-out).  */
@@ -1170,41 +1171,25 @@ func_strip (char *o, char **argv, const char *funcname UNUSED)
 static char *
 func_error (char *o, char **argv, const char *funcname)
 {
-  char **argvp;
-  char *msg, *p;
-  size_t len;
-
-  /* The arguments will be broken on commas.  Rather than create yet
-     another special case where function arguments aren't broken up,
-     just create a format string that puts them back together.  */
-  for (len=0, argvp=argv; *argvp != 0; ++argvp)
-    len += strlen (*argvp) + 2;
-
-  p = msg = alloca (len + 1);
-  msg[0] = '\0';
-
-  for (argvp=argv; argvp[1] != 0; ++argvp)
-    {
-      strcpy (p, *argvp);
-      p += strlen (*argvp);
-      *(p++) = ',';
-      *(p++) = ' ';
-    }
-  strcpy (p, *argvp);
-
   switch (*funcname)
     {
     case 'e':
-      OS (fatal, reading_file, "%s", msg);
+      OS (fatal, reading_file, "%s", argv[0]);
 
     case 'w':
-      OS (error, reading_file, "%s", msg);
+      OS (error, reading_file, "%s", argv[0]);
       break;
 
     case 'i':
-      outputs (0, msg);
-      outputs (0, "\n");
-      break;
+      {
+        size_t len = strlen (argv[0]);
+        char *msg = alloca (len + 2);
+        memcpy (msg, argv[0], len);
+        msg[len] = '\n';
+        msg[len + 1] = '\0';
+        outputs (0, msg);
+        break;
+      }
 
     default:
       OS (fatal, *expanding_var, "Internal error: func_error: '%s'", funcname);
@@ -1260,7 +1245,7 @@ func_sort (char *o, char **argv, const char *funcname UNUSED)
         {
           len = strlen (words[i]);
           if (i == wordi - 1 || strlen (words[i + 1]) != len
-              || strcmp (words[i], words[i + 1]))
+              || memcmp (words[i], words[i + 1], len))
             {
               o = variable_buffer_output (o, words[i], len);
               o = variable_buffer_output (o, " ", 1);
@@ -1293,7 +1278,7 @@ parse_textint (const char *number, const char *msg,
   const char *after_sign, *after_number;
   const char *p = next_token (number);
   int negative = *p == '-';
-  int nonzero = 0;
+  int nonzero;
 
   if (*p == '\0')
     OS (fatal, *expanding_var, _("%s: empty value"), msg);
@@ -1306,9 +1291,9 @@ parse_textint (const char *number, const char *msg,
   *numstart = p;
 
   while (ISDIGIT (*p))
-    if (*p++ == '0')
-      nonzero = 1;
+    ++p;
   after_number = p;
+  nonzero = *numstart != after_number;
   *sign = negative ? -nonzero : nonzero;
 
   /* Check for extra non-whitespace stuff after the value.  */
@@ -1630,7 +1615,7 @@ static int shell_function_completed;
 void
 shell_completed (int exit_code, int exit_sig)
 {
-  char buf[256];
+  char buf[INTSTR_LENGTH];
 
   shell_function_pid = 0;
   if (exit_sig == 0 && exit_code == 127)
@@ -1738,12 +1723,6 @@ windows32_openpipe (int *pipedes, int errfd, pid_t *pid_p, char **command_argv, 
       O (error, NILF, _("windows32_openpipe(): process_init_fd() failed\n"));
       return -1;
     }
-
-  /* make sure that CreateProcess() has Path it needs */
-  sync_Path_environment ();
-  /* 'sync_Path_environment' may realloc 'environ', so take note of
-     the new value.  */
-  envp = environ;
 
   if (! process_begin (hProcess, command_argv, envp, command_argv[0], NULL))
     {
@@ -1859,13 +1838,13 @@ func_shell_base (char *o, char **argv, int trim_newlines)
 char *
 func_shell_base (char *o, char **argv, int trim_newlines)
 {
+  struct childbase child = {0};
   char *batch_filename = NULL;
   int errfd;
 #ifdef __MSDOS__
   FILE *fpipe;
 #endif
   char **command_argv = NULL;
-  char **envp;
   int pipedes[2];
   pid_t pid;
 
@@ -1890,25 +1869,13 @@ func_shell_base (char *o, char **argv, int trim_newlines)
     }
 #endif /* !__MSDOS__ */
 
-  /* Using a target environment for 'shell' loses in cases like:
-       export var = $(shell echo foobie)
-       bad := $(var)
-     because target_environment hits a loop trying to expand $(var) to put it
-     in the environment.  This is even more confusing when 'var' was not
-     explicitly exported, but just appeared in the calling environment.
-
-     See Savannah bug #10593.
-
-  envp = target_environment (NULL);
-  */
-
-  envp = environ;
-
   /* Set up the output in case the shell writes something.  */
   output_start ();
 
   errfd = (output_context && output_context->err >= 0
            ? output_context->err : FD_STDERR);
+
+  child.environment = target_environment (NULL, 0);
 
 #if defined(__MSDOS__)
   fpipe = msdos_openpipe (pipedes, &pid, argv[0]);
@@ -1920,7 +1887,7 @@ func_shell_base (char *o, char **argv, int trim_newlines)
     }
 
 #elif defined(WINDOWS32)
-  windows32_openpipe (pipedes, errfd, &pid, command_argv, envp);
+  windows32_openpipe (pipedes, errfd, &pid, command_argv, child.environment);
   /* Restore the value of just_print_flag.  */
   just_print_flag = j_p_f;
 
@@ -1945,18 +1912,11 @@ func_shell_base (char *o, char **argv, int trim_newlines)
   fd_noinherit (pipedes[1]);
   fd_noinherit (pipedes[0]);
 
-  {
-    struct childbase child;
-    child.cmd_name = NULL;
-    child.output.syncout = 1;
-    child.output.out = pipedes[1];
-    child.output.err = errfd;
-    child.environment = envp;
+  child.output.syncout = 1;
+  child.output.out = pipedes[1];
+  child.output.err = errfd;
 
-    pid = child_execute_job (&child, 1, command_argv);
-
-    free (child.cmd_name);
-  }
+  pid = child_execute_job (&child, 1, command_argv);
 
   if (pid < 0)
     {
@@ -2027,24 +1987,10 @@ func_shell_base (char *o, char **argv, int trim_newlines)
       }
     shell_function_pid = 0;
 
-    /* shell_completed() will set shell_function_completed to 1 when the
-       child dies normally, or to -1 if it dies with status 127, which is
-       most likely an exec fail.  */
-
-    if (shell_function_completed == -1)
-      {
-        /* This likely means that the execvp failed, so we should just
-           write the error message in the pipe from the child.  */
-        fputs (buffer, stderr);
-        fflush (stderr);
-      }
-    else
-      {
-        /* The child finished normally.  Replace all newlines in its output
-           with spaces, and put that in the variable output buffer.  */
-        fold_newlines (buffer, &i, trim_newlines);
-        o = variable_buffer_output (o, buffer, i);
-      }
+    /* Replace all newlines in the command's output with spaces, and put that
+       in the variable output buffer.  */
+    fold_newlines (buffer, &i, trim_newlines);
+    o = variable_buffer_output (o, buffer, i);
 
     free (buffer);
   }
@@ -2056,6 +2002,8 @@ func_shell_base (char *o, char **argv, int trim_newlines)
       free (command_argv[0]);
       free (command_argv);
     }
+
+  free_childbase (&child);
 
   return o;
 }
@@ -2111,8 +2059,8 @@ func_shell_base (char *o, char **argv, int trim_newlines)
     {
       strcpy (ptr, *aptr);
       ptr += strlen (ptr) + 1;
-      *ptr ++ = ' ';
-      *ptr = 0;
+      *(ptr++) = ' ';
+      *ptr = '\0';
     }
 
   ptr[-1] = '\n';
@@ -2187,7 +2135,7 @@ func_not (char *o, char **argv, char *funcname UNUSED)
 
 #ifdef HAVE_DOS_PATHS
 # ifdef __CYGWIN__
-#  define IS_ABSOLUTE(n) ((n[0] && n[1] == ':') || STOP_SET (n[0], MAP_DIRSEP))
+#  define IS_ABSOLUTE(n) ((n[0] && n[1] == ':') || ISDIRSEP (n[0]))
 # else
 #  define IS_ABSOLUTE(n) (n[0] && n[1] == ':')
 # endif
@@ -2221,9 +2169,9 @@ abspath (const char *name, char *apath)
       strcpy (apath, starting_directory);
 
 #ifdef HAVE_DOS_PATHS
-      if (STOP_SET (name[0], MAP_DIRSEP))
+      if (ISDIRSEP (name[0]))
         {
-          if (STOP_SET (name[1], MAP_DIRSEP))
+          if (ISDIRSEP (name[1]))
             {
               /* A UNC.  Don't prepend a drive letter.  */
               apath[0] = name[0];
@@ -2243,7 +2191,7 @@ abspath (const char *name, char *apath)
   else
     {
 #if defined(__CYGWIN__) && defined(HAVE_DOS_PATHS)
-      if (STOP_SET (name[0], MAP_DIRSEP))
+      if (ISDIRSEP (name[0]))
         root_len = 1;
 #endif
       memcpy (apath, name, root_len);
@@ -2252,7 +2200,7 @@ abspath (const char *name, char *apath)
       /* Get past the root, since we already copied it.  */
       name += root_len;
 #ifdef HAVE_DOS_PATHS
-      if (! STOP_SET (apath[root_len - 1], MAP_DIRSEP))
+      if (! ISDIRSEP (apath[root_len - 1]))
         {
           /* Convert d:foo into d:./foo and increase root_len.  */
           apath[2] = '.';
@@ -2272,7 +2220,7 @@ abspath (const char *name, char *apath)
       size_t len;
 
       /* Skip sequence of multiple path-separators.  */
-      while (STOP_SET (*start, MAP_DIRSEP))
+      while (ISDIRSEP (*start))
         ++start;
 
       /* Find end of path component.  */
@@ -2289,25 +2237,24 @@ abspath (const char *name, char *apath)
         {
           /* Back up to previous component, ignore if at root already.  */
           if (dest > apath + root_len)
-            for (--dest; ! STOP_SET (dest[-1], MAP_DIRSEP); --dest)
+            for (--dest; ! ISDIRSEP (dest[-1]); --dest)
               ;
         }
       else
         {
-          if (! STOP_SET (dest[-1], MAP_DIRSEP))
+          if (! ISDIRSEP (dest[-1]))
             *dest++ = '/';
 
           if (dest + len >= apath_limit)
             return NULL;
 
-          dest = memcpy (dest, start, len);
-          dest += len;
+          dest = mempcpy (dest, start, len);
           *dest = '\0';
         }
     }
 
   /* Unless it is root strip trailing separator.  */
-  if (dest > apath + root_len && STOP_SET (dest[-1], MAP_DIRSEP))
+  if (dest > apath + root_len && ISDIRSEP (dest[-1]))
     --dest;
 
   *dest = '\0';
@@ -2515,7 +2462,7 @@ func_abspath (char *o, char **argv, const char *funcname UNUSED)
 static char *func_call (char *o, char **argv, const char *funcname);
 
 #define FT_ENTRY(_name, _min, _max, _exp, _func) \
-  { { (_func) }, STRING_SIZE_TUPLE(_name), (_min), (_max), (_exp), 0 }
+  { { (_func) }, STRING_SIZE_TUPLE(_name), (_min), (_max), (_exp), 0, 0 }
 
 static struct function_table_entry function_table_init[] =
 {
@@ -2570,14 +2517,14 @@ static struct function_table_entry function_table_init[] =
 /* These must come after the definition of function_table.  */
 
 static char *
-expand_builtin_function (char *o, int argc, char **argv,
+expand_builtin_function (char *o, unsigned int argc, char **argv,
                          const struct function_table_entry *entry_p)
 {
   char *p;
 
-  if (argc < (int)entry_p->minimum_args)
+  if (argc < entry_p->minimum_args)
     fatal (*expanding_var, strlen (entry_p->name),
-           _("insufficient number of arguments (%d) to function '%s'"),
+           _("insufficient number of arguments (%u) to function '%s'"),
            argc, entry_p->name);
 
   /* I suppose technically some function could do something with no arguments,
@@ -2590,6 +2537,9 @@ expand_builtin_function (char *o, int argc, char **argv,
   if (!entry_p->fptr.func_ptr)
     OS (fatal, *expanding_var,
         _("unimplemented on this platform: function '%s'"), entry_p->name);
+
+  if (entry_p->adds_command)
+    ++command_count;
 
   if (!entry_p->alloc_fn)
     return entry_p->fptr.func_ptr (o, argv, entry_p->name);
@@ -2623,7 +2573,7 @@ handle_function (char **op, const char **stringp)
   int count = 0;
   char *abeg = NULL;
   char **argv, **argvp;
-  int nargs;
+  unsigned int nargs;
 
   beg = *stringp + 1;
 
@@ -2694,9 +2644,8 @@ handle_function (char **op, const char **stringp)
       char *p, *aend;
 
       abeg = xmalloc (len+1);
-      memcpy (abeg, beg, len);
-      abeg[len] = '\0';
-      aend = abeg + len;
+      aend = mempcpy (abeg, beg, len);
+      *aend = '\0';
 
       for (p=abeg, nargs=0; p <= aend; ++argvp)
         {
@@ -2736,11 +2685,11 @@ handle_function (char **op, const char **stringp)
 static char *
 func_call (char *o, char **argv, const char *funcname UNUSED)
 {
-  static int max_args = 0;
+  static unsigned int max_args = 0;
   char *fname;
   char *body;
   size_t flen;
-  int i;
+  unsigned int i;
   int saved_args;
   const struct function_table_entry *entry_p;
   struct variable *v;
@@ -2789,9 +2738,9 @@ func_call (char *o, char **argv, const char *funcname UNUSED)
 
   for (i=0; *argv; ++i, ++argv)
     {
-      char num[11];
+      char num[INTSTR_LENGTH];
 
-      sprintf (num, "%d", i);
+      sprintf (num, "%u", i);
       define_variable (num, strlen (num), *argv, o_automatic, 0);
     }
 
@@ -2802,9 +2751,9 @@ func_call (char *o, char **argv, const char *funcname UNUSED)
 
   for (; i < max_args; ++i)
     {
-      char num[11];
+      char num[INTSTR_LENGTH];
 
-      sprintf (num, "%d", i);
+      sprintf (num, "%u", i);
       define_variable (num, strlen (num), "", o_automatic, 0);
     }
 
@@ -2852,15 +2801,18 @@ define_new_function (const floc *flocp, const char *name,
          _("Invalid maximum argument count (%u) for function %s"), max, name);
 
   ent = xmalloc (sizeof (struct function_table_entry));
-  ent->name = name;
+  ent->name = strcache_add (name);
   ent->len = (unsigned char) len;
   ent->minimum_args = (unsigned char) min;
   ent->maximum_args = (unsigned char) max;
   ent->expand_args = ANY_SET(flags, GMK_FUNC_NOEXPAND) ? 0 : 1;
   ent->alloc_fn = 1;
+  /* We don't know what this function will do.  */
+  ent->adds_command = 1;
   ent->fptr.alloc_func_ptr = func;
 
-  hash_insert (&function_table, ent);
+  ent = hash_insert (&function_table, ent);
+  free (ent);
 }
 
 void

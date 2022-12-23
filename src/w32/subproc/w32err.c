@@ -1,5 +1,5 @@
 /* Error handling for Windows
-Copyright (C) 1996-2020 Free Software Foundation, Inc.
+Copyright (C) 1996-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,7 +12,7 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include <stdlib.h>
 #include <windows.h>
@@ -44,42 +44,42 @@ map_windows32_error_to_string (DWORD ercode) {
  * static.  (If and when we do need it to be in thread-local storage,
  * the corresponding GCC qualifier is '__thread'.)
  */
-    static char szMessageBuffer[128];
-        /* Fill message buffer with a default message in
-         * case FormatMessage fails
-         */
-    wsprintf (szMessageBuffer, "Error %ld\n", ercode);
+  static char szMessageBuffer[128];
+  DWORD ret;
 
-        /*
-         *  Special code for winsock error handling.
-         */
-        if (ercode > WSABASEERR) {
-#if 0
-                HMODULE hModule = GetModuleHandle("wsock32");
-                if (hModule != NULL) {
-                        FormatMessage(FORMAT_MESSAGE_FROM_HMODULE,
-                                hModule,
-                                ercode,
-                                LANG_NEUTRAL,
-                                szMessageBuffer,
-                                sizeof(szMessageBuffer),
-                                NULL);
-                        FreeLibrary(hModule);
-                }
-#else
-                O (fatal, NILF, szMessageBuffer);
-#endif
-        } else {
-                /*
-                 *  Default system message handling
-                 */
-                FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM,
-                        NULL,
-                        ercode,
-                        LANG_NEUTRAL,
-                        szMessageBuffer,
-                        sizeof(szMessageBuffer),
-                        NULL);
+  /* Fill message buffer with a default message in
+   * case FormatMessage fails
+   */
+  wsprintf (szMessageBuffer, "Error %ld", ercode);
+
+  /*
+   *  Special code for winsock error handling.
+   */
+  if (ercode > WSABASEERR) {
+    O (fatal, NILF, szMessageBuffer);
+  }
+
+  /*
+   *  Default system message handling
+   */
+  ret = FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM,
+                      NULL,
+                      ercode,
+                      LANG_NEUTRAL,
+                      szMessageBuffer,
+                      sizeof(szMessageBuffer),
+                      NULL);
+
+  if (ret)
+    {
+      char *cp;
+      for (cp = szMessageBuffer + ret - 1; cp >= szMessageBuffer; --cp)
+        {
+          if (*cp != '\r' && *cp != '\n')
+            break;
+          *cp = '\0';
         }
-    return szMessageBuffer;
+    }
+
+  return szMessageBuffer;
 }

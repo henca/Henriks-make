@@ -1,4 +1,4 @@
-.TH MAKE 1 "28 February 2016" "GNU" "User Commands"
+.TH MAKE 1 "31 May 2022" "GNU" "User Commands"
 .SH NAME
 make \- GNU make utility to maintain groups of programs
 .SH SYNOPSIS
@@ -48,10 +48,10 @@ files, it issues the commands recorded in the makefile.
 .B make
 executes commands in the
 .I makefile
-to update one or more target
-.IR names ,
+to update one or more
+.IR targets ,
 where
-.I name
+.I target
 is typically a program.
 If no
 .B \-f
@@ -205,6 +205,16 @@ option is given without an argument,
 .BR make
 will not limit the number of jobs that can run simultaneously.
 .TP 0.5i
+\fB\--jobserver-style=\fR\fIstyle\fR
+The style of jobserver to use.  The
+.I style
+may be one of
+.BR fifo ,
+.BR pipe ,
+or
+.B sem
+(Windows only).
+.TP 0.5i
 \fB\-k\fR, \fB\-\-keep\-going\fR
 Continue as much as possible after an error.
 While the target that failed, and those that depend on it, cannot
@@ -319,6 +329,26 @@ Turn off
 .BR \-w ,
 even if it was turned on implicitly.
 .TP 0.5i
+.BI \-\-shuffle "[=MODE]"
+Enable shuffling of goal and prerequisite ordering.
+.I MODE
+is one of
+.I none
+to disable shuffle mode,
+.I random
+to shuffle prerequisites in random order,
+.I reverse
+to consider prerequisites in reverse order, or an integer
+.I <seed>
+which enables
+.I random
+mode with a specific
+.I seed
+value.  If
+.I MODE
+is omitted the default is
+.IR random .
+.TP 0.5i
 \fB\-W\fR \fIfile\fR, \fB\-\-what\-if\fR=\fIfile\fR, \fB\-\-new\-file\fR=\fIfile\fR, \fB\-\-assume\-new\fR=\fIfile\fR
 Pretend that the target
 .I file
@@ -368,7 +398,7 @@ This manual page contributed by Dennis Morse of Stanford University.
 Further updates contributed by Mike Frysinger.  It has been reworked by Roland
 McGrath.  Maintained by Paul Smith.
 .SH "COPYRIGHT"
-Copyright \(co 1992-1993, 1996-2020 Free Software Foundation, Inc.
+Copyright \(co 1992-1993, 1996-2022 Free Software Foundation, Inc.
 This file is part of
 .IR "GNU make" .
 .LP

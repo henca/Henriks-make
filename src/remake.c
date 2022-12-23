@@ -1,5 +1,5 @@
 /* Basic dependency engine for GNU Make.
-Copyright (C) 1988-2020 Free Software Foundation, Inc.
+Copyright (C) 1988-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,7 +12,7 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 #include "filedef.h"
@@ -34,6 +34,7 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 #include <starlet.h>
 #endif
 #ifdef WINDOWS32
+#include <windows.h>
 #include <io.h>
 #include <sys/stat.h>
 #if defined(_MSC_VER) && _MSC_VER > 1200
@@ -78,6 +79,25 @@ static FILE_TIMESTAMP name_mtime (const char *name);
 static const char *library_search (const char *lib, FILE_TIMESTAMP *mtime_ptr);
 
 
+static void
+check_also_make (const struct file *file)
+{
+  struct dep *ad;
+  FILE_TIMESTAMP mtime = file->last_mtime;
+
+  if (mtime == UNKNOWN_MTIME)
+    mtime = name_mtime (file->name);
+
+  /* If we updated the file, check its also-make files.  */
+
+  if (is_ordinary_mtime (mtime) && mtime > file->mtime_before_update)
+    for (ad = file->also_make; ad; ad = ad->next)
+      if (ad->file->last_mtime == NONEXISTENT_MTIME)
+        OS (error, file->cmds ? &file->cmds->fileinfo : NILF,
+            _("warning: pattern recipe did not update peer target '%s'."),
+            ad->file->name);
+}
+
 /* Remake all the goals in the 'struct dep' chain GOALS.  Return update_status
    representing the totality of the status of the goals.
 
@@ -93,8 +113,8 @@ update_goal_chain (struct goaldep *goaldeps)
   enum update_status status = us_none;
 
   /* Duplicate the chain so we can remove things from it.  */
-
-  struct dep *goals = copy_dep_chain ((struct dep *)goaldeps);
+  struct dep *goals_orig = copy_dep_chain ((struct dep *)goaldeps);
+  struct dep *goals = goals_orig;
 
   goal_list = rebuilding_makefiles ? goaldeps : NULL;
 
@@ -108,7 +128,7 @@ update_goal_chain (struct goaldep *goaldeps)
 
   while (goals != 0)
     {
-      struct dep *g, *lastgoal;
+      struct dep *gu, *g, *lastgoal;
 
       /* Start jobs that are waiting for the load to go down.  */
 
@@ -119,12 +139,14 @@ update_goal_chain (struct goaldep *goaldeps)
       reap_children (1, 0);
 
       lastgoal = 0;
-      g = goals;
-      while (g != 0)
+      gu = goals;
+      while (gu != 0)
         {
           /* Iterate over all double-colon entries for this file.  */
           struct file *file;
           int stop = 0, any_not_updated = 0;
+
+          g = gu->shuf ? gu->shuf : gu;
 
           goal_dep = g;
 
@@ -235,30 +257,29 @@ update_goal_chain (struct goaldep *goaldeps)
 
               /* This goal is finished.  Remove it from the chain.  */
               if (lastgoal == 0)
-                goals = g->next;
+                goals = gu->next;
               else
-                lastgoal->next = g->next;
+                lastgoal->next = gu->next;
 
-              /* Free the storage.  */
-              free (g);
-
-              g = lastgoal == 0 ? goals : lastgoal->next;
+              gu = lastgoal == 0 ? goals : lastgoal->next;
 
               if (stop)
                 break;
             }
           else
             {
-              lastgoal = g;
-              g = g->next;
+              lastgoal = gu;
+              gu = gu->next;
             }
         }
 
       /* If we reached the end of the dependency graph update CONSIDERED
          for the next pass.  */
-      if (g == 0)
+      if (gu == 0)
         ++considered;
     }
+
+  free_dep_chain (goals_orig);
 
   if (rebuilding_makefiles)
     {
@@ -415,7 +436,7 @@ complain (struct file *file)
 }
 
 /* Consider a single 'struct file' and update it as appropriate.
-   Return 0 on success, or non-0 on failure.  */
+   Return an update_status value; use us_success if we aren't sure yet.  */
 
 static enum update_status
 update_file_1 (struct file *file, unsigned int depth)
@@ -424,7 +445,7 @@ update_file_1 (struct file *file, unsigned int depth)
   FILE_TIMESTAMP this_mtime;
   int noexist, must_make, deps_changed;
   struct file *ofile;
-  struct dep *d, *ad;
+  struct dep *du, *d, *ad;
   struct dep amake;
   int running = 0;
 
@@ -448,7 +469,7 @@ update_file_1 (struct file *file, unsigned int depth)
         }
 
       DBF (DB_VERBOSE, _("File '%s' was considered already.\n"));
-      return 0;
+      return us_success;
     }
 
   switch (file->command_state)
@@ -458,7 +479,7 @@ update_file_1 (struct file *file, unsigned int depth)
       break;
     case cs_running:
       DBF (DB_VERBOSE, _("Still updating file '%s'.\n"));
-      return 0;
+      return us_success;
     case cs_finished:
       DBF (DB_VERBOSE, _("Finished updating file '%s'.\n"));
       return file->update_status;
@@ -490,8 +511,7 @@ update_file_1 (struct file *file, unsigned int depth)
   noexist = this_mtime == NONEXISTENT_MTIME;
   if (noexist)
     DBF (DB_BASIC, _("File '%s' does not exist.\n"));
-  else if (ORDINARY_MTIME_MIN <= this_mtime && this_mtime <= ORDINARY_MTIME_MAX
-           && file->low_resolution_time)
+  else if (is_ordinary_mtime (this_mtime) && file->low_resolution_time)
     {
       /* Avoid spurious rebuilds due to low resolution time stamps.  */
       int ns = FILE_TIMESTAMP_NS (this_mtime);
@@ -502,10 +522,30 @@ update_file_1 (struct file *file, unsigned int depth)
       this_mtime += FILE_TIMESTAMPS_PER_S - 1 - ns;
     }
 
+  /* If any also_make target doesn't exist, we must remake this one too.
+     If they do exist choose the oldest mtime so they will rebuild.  */
+
+  for (ad = file->also_make; ad && !noexist; ad = ad->next)
+    {
+      struct file *adfile = ad->file;
+      FILE_TIMESTAMP fmtime = file_mtime (adfile);
+
+      noexist = fmtime == NONEXISTENT_MTIME;
+      if (noexist)
+        {
+          check_renamed (adfile);
+          DBS (DB_BASIC,
+               (_("Grouped target peer '%s' of file '%s' does not exist.\n"),
+                adfile->name, file->name));
+        }
+      else if (fmtime < this_mtime)
+        this_mtime = fmtime;
+    }
+
   must_make = noexist;
 
-  /* If file was specified as a target with no commands,
-     come up with some default commands.  */
+  /* If file was specified as a target with no commands, come up with some
+     default commands.  This may also add more also_make files.  */
 
   if (!file->phony && file->cmds == 0 && !file->tried_implicit)
     {
@@ -531,16 +571,27 @@ update_file_1 (struct file *file, unsigned int depth)
     {
       struct dep *lastd = 0;
 
+      /* Perform second expansion and enter each dependency name as a file.
+         We only need to do this if second_expansion has been defined; if it
+         hasn't then all deps were expanded as the makefile was read in.  */
+      if (second_expansion)
+        expand_deps (ad->file);
+
       /* Find the deps we're scanning */
-      d = ad->file->deps;
+      du = ad->file->deps;
       ad = ad->next;
 
-      while (d)
+      while (du)
         {
           enum update_status new;
           FILE_TIMESTAMP mtime;
           int maybe_make;
           int dontcare = 0;
+
+          d = du->shuf ? du->shuf : du;
+
+          if (d->wait_here && running)
+            break;
 
           check_renamed (d->file);
 
@@ -551,14 +602,16 @@ update_file_1 (struct file *file, unsigned int depth)
             {
               OSS (error, NILF, _("Circular %s <- %s dependency dropped."),
                    file->name, d->file->name);
+
               /* We cannot free D here because our the caller will still have
                  a reference to it when we were called recursively via
                  check_dep below.  */
               if (lastd == 0)
-                file->deps = d->next;
+                file->deps = du->next;
               else
-                lastd->next = d->next;
-              d = d->next;
+                lastd->next = du->next;
+
+              du = du->next;
               continue;
             }
 
@@ -607,8 +660,8 @@ update_file_1 (struct file *file, unsigned int depth)
             d->changed = ((file_mtime (d->file) != mtime)
                           || (mtime == NONEXISTENT_MTIME));
 
-          lastd = d;
-          d = d->next;
+          lastd = du;
+          du = du->next;
         }
     }
 
@@ -617,58 +670,65 @@ update_file_1 (struct file *file, unsigned int depth)
 
   if (must_make || always_make_flag)
     {
-      for (d = file->deps; d != 0; d = d->next)
-        if (d->file->intermediate)
-          {
-            enum update_status new;
-            int dontcare = 0;
+      for (du = file->deps; du != 0; du = du->next)
+        {
+          d = du->shuf ? du->shuf : du;
 
-            FILE_TIMESTAMP mtime = file_mtime (d->file);
-            check_renamed (d->file);
-            d->file->parent = file;
+          if (d->wait_here && running)
+            break;
 
-            /* Inherit dontcare flag from our parent. */
-            if (rebuilding_makefiles)
+          if (d->file->intermediate)
+            {
+              enum update_status new;
+              int dontcare = 0;
+
+              FILE_TIMESTAMP mtime = file_mtime (d->file);
+              check_renamed (d->file);
+              d->file->parent = file;
+
+              /* Inherit dontcare flag from our parent. */
+              if (rebuilding_makefiles)
+                {
+                  dontcare = d->file->dontcare;
+                  d->file->dontcare = file->dontcare;
+                }
+
+              /* We may have already considered this file, when we didn't know
+                 we'd need to update it.  Force update_file() to consider it and
+                 not prune it.  */
+              d->file->considered = 0;
+
+              new = update_file (d->file, depth);
+              if (new > dep_status)
+                dep_status = new;
+
+              /* Restore original dontcare flag. */
+              if (rebuilding_makefiles)
+                d->file->dontcare = dontcare;
+
+              check_renamed (d->file);
+
               {
-                dontcare = d->file->dontcare;
-                d->file->dontcare = file->dontcare;
+                struct file *f = d->file;
+                if (f->double_colon)
+                  f = f->double_colon;
+                do
+                  {
+                    running |= (f->command_state == cs_running
+                                || f->command_state == cs_deps_running);
+                    f = f->prev;
+                  }
+                while (f != 0);
               }
 
-            /* We may have already considered this file, when we didn't know
-               we'd need to update it.  Force update_file() to consider it and
-               not prune it.  */
-            d->file->considered = 0;
+              if (dep_status && !keep_going_flag)
+                break;
 
-            new = update_file (d->file, depth);
-            if (new > dep_status)
-              dep_status = new;
-
-            /* Restore original dontcare flag. */
-            if (rebuilding_makefiles)
-              d->file->dontcare = dontcare;
-
-            check_renamed (d->file);
-
-            {
-              struct file *f = d->file;
-              if (f->double_colon)
-                f = f->double_colon;
-              do
-                {
-                  running |= (f->command_state == cs_running
-                              || f->command_state == cs_deps_running);
-                  f = f->prev;
-                }
-              while (f != 0);
+              if (!running)
+                d->changed = ((file->phony && file->cmds != 0)
+                              || file_mtime (d->file) != mtime);
             }
-
-            if (dep_status && !keep_going_flag)
-              break;
-
-            if (!running)
-              d->changed = ((file->phony && file->cmds != 0)
-                            || file_mtime (d->file) != mtime);
-          }
+        }
     }
 
   finish_updating (file);
@@ -681,7 +741,7 @@ update_file_1 (struct file *file, unsigned int depth)
       set_command_state (file, cs_deps_running);
       --depth;
       DBF (DB_VERBOSE, _("The prerequisites of '%s' are being made.\n"));
-      return 0;
+      return us_success;
     }
 
   /* If any dependency failed, give up now.  */
@@ -811,7 +871,8 @@ update_file_1 (struct file *file, unsigned int depth)
 
       /* Since make has not created this file, make should not remove it,
          even if the file is intermediate. */
-      file->secondary = 1;
+      if (!file->notintermediate && no_intermediates == 0)
+        file->secondary = 1;
 
       notice_finished_file (file);
 
@@ -825,7 +886,7 @@ update_file_1 (struct file *file, unsigned int depth)
           file = file->prev;
         }
 
-      return 0;
+      return us_success;
     }
 
   DBF (DB_BASIC, _("Must remake target '%s'.\n"));
@@ -844,7 +905,7 @@ update_file_1 (struct file *file, unsigned int depth)
   if (file->command_state != cs_finished)
     {
       DBF (DB_VERBOSE, _("Recipe of '%s' is being run.\n"));
-      return 0;
+      return us_success;
     }
 
   switch (file->update_status)
@@ -979,23 +1040,30 @@ notice_finished_file (struct file *file)
     }
 
   if (ran && file->update_status != us_none)
-    /* We actually tried to update FILE, which has
-       updated its also_make's as well (if it worked).
-       If it didn't work, it wouldn't work again for them.
-       So mark them as updated with the same status.  */
-    for (d = file->also_make; d != 0; d = d->next)
-      {
-        d->file->command_state = cs_finished;
-        d->file->updated = 1;
-        d->file->update_status = file->update_status;
+    {
+      /* We actually tried to update FILE, which has
+         updated its also_make's as well (if it worked).
+         If it didn't work, it wouldn't work again for them.
+         So mark them as updated with the same status.  */
+      for (d = file->also_make; d != 0; d = d->next)
+        {
+          d->file->command_state = cs_finished;
+          d->file->updated = 1;
+          d->file->update_status = file->update_status;
 
-        if (ran && !d->file->phony)
-          /* Fetch the new modification time.
-             We do this instead of just invalidating the cached time
-             so that a vpath_search can happen.  Otherwise, it would
-             never be done because the target is already updated.  */
-          f_mtime (d->file, 0);
-      }
+          if (ran && !d->file->phony)
+            /* Fetch the new modification time.
+               We do this instead of just invalidating the cached time
+               so that a vpath_search can happen.  Otherwise, it would
+               never be done because the target is already updated.  */
+            f_mtime (d->file, 0);
+        }
+
+      /* If the target was created by an implicit rule, and it was updated,
+         warn about any of its also_make targets that don't exist.  */
+      if (file->tried_implicit && file->also_make)
+        check_also_make (file);
+    }
   else if (file->update_status == us_none)
     /* Nothing was done for FILE, but it needed nothing done.
        So mark it now as "succeeded".  */
@@ -1081,6 +1149,12 @@ check_dep (struct file *file, unsigned int depth,
             }
 
           ld = 0;
+          /* Perform second expansion and enter each dependency name as a file.
+             We only need to do this if second_expansion has been defined; if it
+             hasn't then all deps were expanded as the makefile was read in.  */
+          if (second_expansion)
+            expand_deps (file);
+
           d = file->deps;
           while (d != 0)
             {
@@ -1479,7 +1553,7 @@ name_mtime (const char *name)
 
 #if defined(WINDOWS32)
   {
-    char tem[MAXPATHLEN], *tstart, *tend;
+    char tem[MAX_PATH+1], *tstart, *tend;
     const char *p = name + strlen (name);
 
     /* Remove any trailing slashes and "."/"..".  MS-Windows stat
@@ -1497,7 +1571,7 @@ name_mtime (const char *name)
           tend--;
         if (*tend == '.' && tend > tstart)
           tend--;
-        for ( ; tend > tstart && (*tend == '/' || *tend == '\\'); tend--)
+        for ( ; tend > tstart && ISDIRSEP (*tend); tend--)
           *tend = '\0';
       }
     else

@@ -1,5 +1,5 @@
 @echo off
-rem Copyright (C) 1998-2020 Free Software Foundation, Inc.
+rem Copyright (C) 1998-2022 Free Software Foundation, Inc.
 rem This file is part of GNU Make.
 rem
 rem GNU Make is free software; you can redistribute it and/or modify it under
@@ -13,7 +13,7 @@ rem FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for.
 rem more details.
 rem
 rem You should have received a copy of the GNU General Public License along
-rem with this program.  If not, see <http://www.gnu.org/licenses/>.
+rem with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 echo Building Make for MSDOS with DJGPP
 
@@ -49,14 +49,14 @@ gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/s
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/dir.c -o dir.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/file.c -o file.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/misc.c -o misc.o
-gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/main.c -o main.o
-gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -DINCLUDEDIR=\"c:/djgpp/include\" -O2 -g %XSRC%/src/read.c -o read.o
-gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -DLIBDIR=\"c:/djgpp/lib\" -O2 -g %XSRC%/src/remake.c -o remake.o
+gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -DLOCALEDIR=\"/dev/env/DJDIR/share/locale\" -O2 -g %XSRC%/src/main.c -o main.o
+gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -DINCLUDEDIR=\"/dev/env/DJDIR/include\" -O2 -g %XSRC%/src/read.c -o read.o
+gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -DLIBDIR=\"/dev/env/DJDIR/lib\" -O2 -g %XSRC%/src/remake.c -o remake.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/rule.c -o rule.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/implicit.c -o implicit.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/default.c -o default.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/variable.c -o variable.o
-gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/expand.c -o eyxpand.o
+gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/expand.c -o expand.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/function.c -o function.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/vpath.c -o vpath.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/hash.c -o hash.o
@@ -68,15 +68,17 @@ gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/s
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/remote-stub.c -o remote-stub.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/getopt.c -o getopt.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/getopt1.c -o getopt1.o
+gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/shuffle.c -o shuffle.o
+gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/load.c -o load.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/lib/glob.c -o lib/glob.o
 gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/lib/fnmatch.c -o lib/fnmatch.o
 @echo off
 echo commands.o > respf.$$$
-for %%f in (job output dir file misc main read remake rule implicit default variable) do echo %%f.o >> respf.$$$
-for %%f in (expand function vpath hash strcache version ar arscan signame remote-stub getopt getopt1) do echo %%f.o >> respf.$$$
+for %%f in (job output dir file misc main read remake rule implicit default variable load) do echo %%f.o >> respf.$$$
+for %%f in (expand function vpath hash strcache version ar arscan signame remote-stub getopt getopt1 shuffle) do echo %%f.o >> respf.$$$
 for %%f in (lib\glob lib\fnmatch) do echo %%f.o >> respf.$$$
-rem gcc  -c -I./src -I%XSRC% -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/guile.c -o guile.o
-rem echo guile.o >> respf.$$$
+gcc -c -I./src -I%XSRC%/src -I./lib -I%XSRC%/lib -DHAVE_CONFIG_H -O2 -g %XSRC%/src/guile.c -o guile.o
+echo guile.o >> respf.$$$
 @echo Linking...
 @echo on
 gcc -o make.exe @respf.$$$
@@ -84,7 +86,7 @@ gcc -o make.exe @respf.$$$
 if not exist make.exe echo Make.exe build failed...
 if exist make.exe echo make.exe is now built!
 if exist make.exe del respf.$$$
-if exist make.exe copy /Y Basic.mk Makefile
+if exist make.exe copy /Y %XSRC%\Basic.mk Makefile
 goto End
 
 :SmallEnv

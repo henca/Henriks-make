@@ -17,9 +17,6 @@ GPG_KEYID := 80CB727A20C79BB2
 # SRCROOTDIR is just a handy location to keep source files in
 SRCROOTDIR ?= $(HOME)/src
 
-# Where the gnulib project has been locally cloned
-GNULIBDIR ?= $(SRCROOTDIR)/gnulib
-
 # Where to put the CVS checkout of the GNU web repository
 GNUWEBDIR ?= $(SRCROOTDIR)/gnu-www
 
@@ -46,31 +43,28 @@ GUILE_CFLAGS := $(patsubst -I%,-isystem %,$(GUILE_CFLAGS))
 MAKE_MAINTAINER_MODE := -DMAKE_MAINTAINER_MODE
 AM_CPPFLAGS += $(MAKE_MAINTAINER_MODE)
 
-TEMPLATES = README README.DOS README.W32 README.OS2 \
-	    src/config.ami src/configh.dos src/config.h.W32 src/config.h-vms
-
-all: $(TEMPLATES)
-
 # Create preprocessor output files--GCC specific!
 %.i : %.c
 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) -E -dD -o $@ $<
 
-# General rule for turning a .template into a regular file.
-#
-$(TEMPLATES) : % : %.template Makefile
-	rm -f $@
-	sed -e 's@%VERSION%@$(VERSION)@g' \
-	    -e 's@%PACKAGE%@$(PACKAGE)@g' \
-	  $< > $@
-	chmod a-w $@
+# Create the mkconfig.h file for non-POSIX config headers
+
+all: src/mkconfig.h
+src/mkconfig.h: src/mkconfig.h.in config.status
+	./config.status --header=$@
+
+# Build the README
+
+all: README
+README : README.in config.status
+	./config.status --file=$@
 
 # Construct Makefiles by adding on dependencies, etc.
 #
 cvt = $(patsubst $1/%,$$($1)%,$(filter %.c,$2))
 Basic.mk: Basic.mk.template .dep_segment Makefile
 	rm -f $@
-	sed -e 's@%VERSION%@$(VERSION)@g' \
-	    -e 's@%make_SOURCES%@$(call cvt,src,$(make_SRCS))@g' \
+	sed -e 's@%make_SOURCES%@$(call cvt,src,$(make_SRCS))@g' \
 	    -e 's@%w32_SOURCES%@$(call cvt,src,$(w32_SRCS))@g' \
 	    -e 's@%vms_SOURCES%@$(call cvt,src,$(vms_SRCS))@g' \
 	    -e 's@%amiga_SOURCES%@$(call cvt,src,$(amiga_SRCS))@g' \
@@ -79,12 +73,12 @@ Basic.mk: Basic.mk.template .dep_segment Makefile
 	    -e 's@%glob_SOURCES%@$(call cvt,lib,$(glob_SRCS))@g' \
 	  $< > $@
 	echo >>$@; echo '# --------------- DEPENDENCIES' >>$@; echo '#' >>$@; \
+	echo >>$@; echo '$$(OBJECTS): $$(SRCDIR)/src/mkconfig.h' >>$@; \
 	sed -e 's@^\([^ ]*\)\.o:@$$(OUTDIR)\1.$$(OBJEXT):@' \
 	    -e 's@\([^ ]*\.[ch]\)@$$(SRCDIR)/\1@g' \
 	    -e 's@$$(SRCDIR)/src/config.h@$$(OUTDIR)src/config.h@g' \
-	    -e 's@$$(SRCDIR)/lib/stdlib.h@@g' \
-	    -e 's@$$(SRCDIR)/lib/sys/types.h@@g' \
-	    -e 's@$$(SRCDIR)/lib/unistd.h@@g' \
+	    -e 's@$$(SRCDIR)/lib/alloca.h@@g' \
+	    -e 's@$$(SRCDIR)/lib/stdbool.h@@g' \
 	  $(word 2,$^) >>$@
 	chmod a-w $@
 
@@ -119,12 +113,15 @@ GIT :=	git
 git-clean:
 	-$(GIT) clean -fdX
 git-very-clean: git-clean
-	-$(GIT) clean -fd
+	-$(GIT) clean -fdx
 
 
 ## ---------------------- ##
 ## Generating ChangeLog.  ##
 ## ---------------------- ##
+
+# Where the gnulib project has been locally cloned
+GNULIBDIR ?= $(or $(wildcard $(GNULIB_SRCDIR)),./gnulib)
 
 gl2cl-date := 2013-10-10
 gl2cl := $(GNULIBDIR)/build-aux/gitlog-to-changelog
@@ -177,7 +174,7 @@ po_sync = translationproject.org::tp/latest/$(PACKAGE)/
 
 .PHONY: do-po-update po-update
 do-po-update:
-	tmppo="/tmp/po-$(PACKAGE)-$(VERSION).$$$$" \
+	tmppo="/tmp/po-$(PACKAGE)-$(PACKAGE_VERSION).$$$$" \
 	  && rm -rf "$$tmppo" \
 	  && mkdir "$$tmppo" \
 	  && $(RSYNC) $(po_sync)  "$$tmppo" \
@@ -231,10 +228,15 @@ get-doc/make-stds.texi get-doc/fdl.texi:
 # Extra configuration checks.  #
 # ---------------------------- #
 
+# Make the dist file contents more regular, if we're using GNU tar.
+# Suggested by Tzvetelin Katchov <katchov@gnu.org>
+
+export TAR_OPTIONS := --mode=u+w,go-w --owner=0 --group=0 --numeric-owner --sort=name
+
 # When I released 4.3 somehow the INSTALL file was missing.
 # When I tried to build it again, it was there.  I have no idea what happened
 # but add a new check to be sure it doesn't happen again.
-mk_dist_files = AUTHORS ChangeLog COPYING INSTALL README
+mk_dist_files = AUTHORS ChangeLog COPYING INSTALL README src/mkconfig.h
 
 dist: mk-distcheck
 
@@ -253,8 +255,12 @@ mk-distcheck: distdir
 
 CFGCHECK_CONFIGFLAGS =
 CFGCHECK_BUILDFLAGS  =
-CFGCHECK_MAKEFLAGS   = CFLAGS='$(AM_CFLAGS)'
+# We can't use our mondo warnings as these are used to compile gnulib modules
+# as well, and that will fail.
+CFGCHECK_MAKEFLAGS   = # CFLAGS='$(AM_CFLAGS)'
 
+# We don't support C90 anymore, strictly, but this test still works (with lots
+# of warnings) and it helps us avoid egregious incompatibilities.
 checkcfg.strict-c90:  CFGCHECK_CONFIGFLAGS = CFLAGS='-std=c90 -pedantic'
 checkcfg.strict-c90:  CFGCHECK_MAKEFLAGS   =
 
@@ -289,6 +295,18 @@ check-alt-config: $(CONFIG_CHECKS)
 NR_MAKE = $(MAKE)
 
 # Check builds both with build.sh and with make
+build.sh_SCRIPT = exec >>'checkcfg.$*.log' 2>&1; set -x; \
+		cd $(distdir)/_build \
+		&& OUTDIR=_bld ../build.sh -k $(CFGCHECK_BUILD_FLAGS) \
+		&& _bld/make GMK_OUTDIR=../_bld $(AM_MAKEFLAGS) check-local \
+		&& _bld/make GMK_OUTDIR=../_bld $(AM_MAKEFLAGS) clean
+
+nrmake_SCRIPT = exec >>'checkcfg.$*.log' 2>&1; set -x; \
+		cd $(distdir)/_build \
+		&& $(NR_MAKE) $(AM_MAKEFLAGS) $(CFGCHECK_MAKEFLAGS) \
+		&& ./make $(AM_MAKEFLAGS) check \
+		&& ./make $(AM_MAKEFLAGS) clean
+
 $(CONFIG_CHECKS): checkcfg.%: distdir
 	@echo "Building $@ (output in checkcfg.$*.log)"
 	exec >'checkcfg.$*.log' 2>&1; \
@@ -298,16 +316,8 @@ $(CONFIG_CHECKS): checkcfg.%: distdir
 	&& cd $(distdir)/_build \
 	&& ../configure --srcdir=.. $(CFGCHECK_CONFIGFLAGS) \
 	       $(AM_DISTCHECK_CONFIGURE_FLAGS) $(DISTCHECK_CONFIGURE_FLAGS)
-	exec >>'checkcfg.$*.log' 2>&1; set -x; \
-	   cd $(distdir)/_build \
-	&& OUTDIR=_bld ../build.sh $(CFGCHECK_BUILD_FLAGS) \
-	&& _bld/make $(AM_MAKEFLAGS) check-local \
-	&& _bld/make $(AM_MAKEFLAGS) clean
-	exec >>'checkcfg.$*.log' 2>&1; set -x; \
-	   cd $(distdir)/_build \
-	&& $(NR_MAKE) $(AM_MAKEFLAGS) $(CFGCHECK_MAKEFLAGS) \
-	&& ./make $(AM_MAKEFLAGS) check \
-	&& ./make $(AM_MAKEFLAGS) clean
+	$(build.sh_SCRIPT)
+	$(nrmake_SCRIPT)
 
 # Try using Basic.mk.  I can't test this on POSIX systems because it is only
 # used for non-POSIX systems; POSIX systems can just use normal
@@ -323,7 +333,7 @@ checkcfg.basicmk: checkcfg.% : distdir
 	       $(AM_DISTCHECK_CONFIGURE_FLAGS) $(DISTCHECK_CONFIGURE_FLAGS)
 	exec >>'checkcfg.$*.log' 2>&1; set -x; \
 	   cd $(distdir)/_build \
-	&& $(NR_MAKE) $(AM_MAKEFLAGS) -f ../Basic.mk SRCDIR=.. CFLAGS='$(AM_CFLAGS)' \
+	&& $(NR_MAKE) $(AM_MAKEFLAGS) -f ../Basic.mk SRCDIR=.. $(CFGCHECK_MAKEFLAGS)
 	&& ./make $(AM_MAKEFLAGS) -f ../Basic.mk SRCDIR=.. check \
 	&& ./make $(AM_MAKEFLAGS) -f ../Basic.mk SRCDIR=.. clean
 	exec >>'checkcfg.$*.log' 2>&1; \
@@ -332,7 +342,7 @@ checkcfg.basicmk: checkcfg.% : distdir
 	&& cd $(distdir) \
 	&& ./configure \
 	       $(AM_DISTCHECK_CONFIGURE_FLAGS) $(DISTCHECK_CONFIGURE_FLAGS) \
-	&& $(NR_MAKE) $(AM_MAKEFLAGS) -f Basic.mk CFLAGS='$(AM_CFLAGS)' \
+	&& $(NR_MAKE) $(AM_MAKEFLAGS) -f Basic.mk $(CFGCHECK_MAKEFLAGS)' \
 	&& ./make $(AM_MAKEFLAGS) -f Basic.mk check \
 	&& ./make $(AM_MAKEFLAGS) -f Basic.mk clean
 
@@ -353,10 +363,10 @@ local-check: po-check changelog-check
 # copyright-check writable-files
 
 changelog-check:
-	if head $(top_srcdir)/ChangeLog | grep 'Version $(VERSION)' >/dev/null; then \
+	if head $(top_srcdir)/ChangeLog | grep 'Version $(PACKAGE_VERSION)' >/dev/null; then \
 	  :; \
 	else \
-	  echo "$(VERSION) not in ChangeLog" 1>&2; \
+	  echo "$(PACKAGE_VERSION) not in ChangeLog" 1>&2; \
 	  exit 1; \
 	fi
 
@@ -403,7 +413,7 @@ gendocs: update-gnuweb update-makeweb
 	cd doc \
 	  && rm -rf doc/manual \
 	  && $(GNULIBDIR)/build-aux/gendocs.sh --email '$(BUGLIST)' \
-		make 'GNU Make Manual'
+		make '$(PACKAGE_NAME) Manual'
 	find '$(MAKEWEBDIR)'/manual \( -name CVS -prune \) -o \( -name '[!.]*' -type f -exec rm -f '{}' \; \)
 	cp -r doc/manual '$(MAKEWEBDIR)'
 	@echo 'Status of $(MAKEWEBDIR) repo:' && cd '$(MAKEWEBDIR)' \
@@ -411,7 +421,7 @@ gendocs: update-gnuweb update-makeweb
 	@echo '- cvs add <new files>' \
 	    && echo '- cvs remove <deleted files>' \
 	    && echo '- cvs commit' \
-	    && echo '- cvs tag make-$(subst .,-,$(VERSION))'
+	    && echo '- cvs tag make-$(subst .,-,$(PACKAGE_VERSION))'
 
 
 ## --------------------------------------------- ##
@@ -436,7 +446,7 @@ $(COV_BUILD_FILE): $(filter %.c %.h,$(DISTFILES))
 	cd '$(distdir)'/_build \
 	    && ../configure --srcdir=.. \
 		$(AM_DISTCHECK_CONFIGURE_FLAGS) $(DISTCHECK_CONFIGURE_FLAGS) \
-		CFLAGS='$(AM_CFLAGS)'
+		$(CFGCHECK_MAKEFLAGS)
 	PATH="$${COVERITY_PATH:+$$COVERITY_PATH/bin:}$$PATH"; \
 	    cd '$(distdir)'/_build \
 		&& cov-build --dir cov-int ../build.sh
@@ -449,15 +459,15 @@ $(COV_BUILD_FILE)-submitted: $(COV_BUILD_FILE)
 	@test -n "$(COVERITY_TOKEN)" || { echo 'COVERITY_TOKEN not set'; exit 1; }
 	@test -n "$(COVERITY_EMAIL)" || { echo 'COVERITY_EMAIL not set'; exit 1; }
 	rm -f '$@'
-	case '$(VERSION)' in \
+	case '$(PACKAGE_VERSION)' in \
 	    (*.*.9*) type="daily build"; ext=".$$(date +%Y%m%d)" ;; \
 	    (*)      type="release"; ext= ;; \
 	esac; \
 	curl --form token='$(COVERITY_TOKEN)' \
 	     --form email='$(COVERITY_EMAIL)' \
 	     --form file='@$<' \
-	     --form version="$(VERSION)$$ext" \
-	     --form description="GNU make $$type" \
+	     --form version="$(PACKAGE_VERSION)$$ext" \
+	     --form description="$(PACKAGE_NAME) $$type" \
 	     'https://scan.coverity.com/builds?project=gmake'
 	cp '$<' '$@'
 
@@ -468,11 +478,11 @@ $(COV_BUILD_FILE)-submitted: $(COV_BUILD_FILE)
 
 .PHONY: tag-release
 tag-release:
-	case '$(VERSION)' in \
+	case '$(PACKAGE_VERSION)' in \
 	    (*.*.9*) message=" candidate" ;; \
 	    (*)      message= ;; \
 	esac; \
-	$(GIT) tag -m "GNU Make release$$message $(VERSION)" -u '$(GPG_KEYID)' '$(VERSION)'
+	$(GIT) tag -m "$(PACKAGE_NAME) release$$message $(PACKAGE_VERSION)" -u '$(GPG_KEYID)' '$(PACKAGE_VERSION)'
 
 
 ## ------------------------- ##
@@ -503,14 +513,14 @@ distsign: $(DIST_ARCHIVES_SIG) $(DIST_ARCHIVES_DIRECTIVE)
 	   echo 'version: 1.2'; \
 	   echo 'directory: make'; \
 	   echo 'filename: $*'; \
-	   echo 'comment: Official upload of GNU make version $(VERSION)'; \
+	   echo 'comment: Official upload of $(PACKAGE_NAME) version $(PACKAGE_VERSION)'; \
 	 ) > "$*.directive"
 	$(GPG) $(GPGFLAGS) -o "$@" --clearsign "$*.directive"
 	@rm -f "$*.directive"
 
 # Upload the artifacts
 
-FTPPUT = ncftpput
+FTPPUT := $(firstword $(shell command -v ncftpput) $(wildcard $(GNULIBDIR)/build-aux/ncftpput-ftp) invalid)
 gnu-upload-host = ftp-upload.gnu.org
 gnu-upload-dir  = /incoming
 
@@ -524,7 +534,7 @@ $(UPLOADS): $(DIST_ARCHIVES) $(DIST_ARCHIVES_SIG) $(DIST_ARCHIVES_DIRECTIVE)
 # Rebuild Makefile.in if this file is modifed.
 Makefile.in: maintMakefile
 
-# Copyright (C) 1997-2020 Free Software Foundation, Inc.
+# Copyright (C) 1997-2022 Free Software Foundation, Inc.
 # This file is part of GNU Make.
 #
 # GNU Make is free software; you can redistribute it and/or modify it under
@@ -538,4 +548,4 @@ Makefile.in: maintMakefile
 # details.
 #
 # You should have received a copy of the GNU General Public License along with
-# this program.  If not, see <http://www.gnu.org/licenses/>.
+# this program.  If not, see <https://www.gnu.org/licenses/>.

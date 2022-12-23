@@ -76,7 +76,7 @@ $ filelist = "[.src]ar [.src]arscan [.src]commands [.src]default [.src]dir " + -
              "[.src]hash [.src]implicit [.src]job [.src]load [.src]main " + -
              "[.src]misc [.src]read [.src]remake [.src]remote-stub " + -
              "[.src]rule [.src]output [.src]signame [.src]variable " + -
-             "[.src]version [.src]strcache [.src]vpath " + -
+             "[.src]version [.src]shuffle [.src]strcache [.src]vpath " + -
              "[.src]vmsfunctions [.src]vmsify [.src]vms_progname " + -
              "[.src]vms_exit [.src]vms_export_symbol " + -
              "[.lib]alloca [.lib]fnmatch [.lib]glob [.src]getopt1 [.src]getopt"
@@ -154,7 +154,7 @@ $ exit
 $ endsubroutine : compileit
 $!
 $!-----------------------------------------------------------------------------
-$!Copyright (C) 1996-2020 Free Software Foundation, Inc.
+$!Copyright (C) 1996-2022 Free Software Foundation, Inc.
 $!This file is part of GNU Make.
 $!
 $!GNU Make is free software; you can redistribute it and/or modify it under
@@ -168,4 +168,4 @@ $!FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 $!details.
 $!
 $!You should have received a copy of the GNU General Public License along with
-$!this program.  If not, see <http://www.gnu.org/licenses/>.
+$!this program.  If not, see <https://www.gnu.org/licenses/>.

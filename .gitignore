@@ -17,6 +17,8 @@ GTAGS
 *.rej
 
 # Configure artifacts
+/lib/
+/m4/
 ABOUT-NLS
 INSTALL
 Makefile
@@ -32,9 +34,10 @@ config.log
 config.status
 configure
 /mk/Posix.mk
-stamp-h1
+stamp-*
 .dirstamp
 gnulib
+convert.sed
 
 # Build artifacts
 .deps/
@@ -57,19 +60,17 @@ WinRel/
 GccDebug/
 GccRel/
 
+# Test artifacts
+makeerror-*
+test-suite.log
+
 # Distribution artifacts
 .dep_segment
 .check-git-HEAD
 ChangeLog
 README
-README.DOS
-README.OS2
-README.W32
 build.cfg
-config.ami
-config.h-vms
-config.h.W32
-configh.dos
+mkconfig.h
 make-[0-9]*/
 make-[0-9]*.tar.*
 checkcfg.*.log

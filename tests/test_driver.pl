@@ -5,7 +5,7 @@
 # Written 91-12-02 through 92-01-01 by Stephen McGee.
 # Modified 92-02-11 through 92-02-22 by Chris Arthur to further generalize.
 #
-# Copyright (C) 1991-2020 Free Software Foundation, Inc.
+# Copyright (C) 1991-2022 Free Software Foundation, Inc.
 # This file is part of GNU Make.
 #
 # GNU Make is free software; you can redistribute it and/or modify it under
@@ -19,7 +19,7 @@
 # details.
 #
 # You should have received a copy of the GNU General Public License along with
-# this program.  If not, see <http://www.gnu.org/licenses/>.
+# this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
 # Test driver routines used by a number of test suites, including
@@ -33,6 +33,7 @@
 use Config;
 use Cwd;
 use File::Spec;
+use File::Temp;
 
 # The number of test categories we've run
 $categories_run = 0;
@@ -42,49 +43,69 @@ $categories_passed = 0;
 $total_tests_run = 0;
 # The total number of individual tests that have passed
 $total_tests_passed = 0;
+# Set to true if something failed.  It could be that tests_run == tests_passed
+# even with failures, if we don't run tests for some reason.
+$some_test_failed = 0;
 # The number of tests in this category that have been run
 $tests_run = 0;
 # The number of tests in this category that have passed
 $tests_passed = 0;
 
+$port_type = undef;
+$osname = undef;
+$vos = undef;
+$pathsep = undef;
 
 # Yeesh.  This whole test environment is such a hack!
 $test_passed = 1;
 
 # Timeout in seconds.  If the test takes longer than this we'll fail it.
-$test_timeout = 5;
-$test_timeout = 10 if $^O eq 'VMS';
+# This is to prevent hung tests.
+$test_timeout = 60;
+
+$diff_name = undef;
 
 # Path to Perl
 $perl_name = $^X;
 if ($^O ne 'VMS') {
     $perl_name .= $Config{_exe} unless $perl_name =~ m/$Config{_exe}$/i;
 }
-# If it's a simple name, look it up on PATH
-{
-    my ($v,$d,$f) = File::Spec->splitpath($perl_name);
-    if (!$d) {
-        my $perl = undef;
-        foreach my $p (File::Spec->path()) {
-            my $f = File::Spec->catfile($p, $f);
-            if (-e $f) {
-                $perl = $f;
-                last;
-            }
-        }
-        if ($perl) {
-            $perl_name = $perl;
-        } else {
-            print "Cannot locate Perl interpreter $perl_name\n";
-        }
+
+sub which {
+  my $cmd = $_[0];
+
+  # Poor man's File::Which
+  my ($v,$d,$f) = File::Spec->splitpath($cmd);
+  if ($d) {
+    # The command has a pathname so don't look for it in PATH.
+    # Use forward-slashes even on Windows, else it fails in recipes.
+    (-f $cmd and -x _) or return undef;
+    $cmd =~ tr,\\,/,;
+    return $cmd;
+  }
+
+  my @ext;
+  if ($port_type eq 'UNIX' || $port_type eq 'VMS-DCL') {
+    @ext = ('');
+  } else {
+    @ext = index($f, '.') == -1 ? () : ('');
+    push @ext, split /;/, $ENV{PATHEXT};
+  }
+
+  foreach my $dir (File::Spec->path()) {
+    foreach my $e (@ext) {
+      my $p = File::Spec->catfile($dir, "$cmd$e");
+      (-f $p and -x _) or next;
+      # Use forward-slashes even on Windows, else it fails in recipes.
+      $p =~ tr,\\,/,;
+      return $p;
     }
+  }
+  return undef;
 }
-# Make sure it uses forward-slashes even on Windows, else it won't work
-# in recipes
-$perl_name =~ tr,\\,/,;
 
 # %makeENV is the cleaned-out environment.  Tests must not modify it.
-%makeENV = ();
+my %makeENV = ();
 
 sub vms_get_process_logicals {
   # Sorry for the long note here, but to keep this test running on
@@ -171,18 +192,20 @@ sub cmd2str
 
 sub toplevel
 {
+  %origENV = %ENV unless $^O eq 'VMS';
+
   # Pull in benign variables from the user's environment
 
-  foreach (# UNIX-specific things
+  foreach (# POSIX-specific things
            'TZ', 'TMPDIR', 'HOME', 'USER', 'LOGNAME', 'PATH',
            'LD_LIBRARY_PATH',
-           # SAN things
-           'ASAN_OPTIONS', 'UBSAN_OPTIONS',
+           # *SAN things
+           'ASAN_OPTIONS', 'UBSAN_OPTIONS', 'LSAN_OPTIONS',
            # Purify things
            'PURIFYOPTIONS',
-           # Windows NT-specific stuff
-           'Path', 'SystemRoot',
-           # DJGPP-specific stuff
+           # Windows-specific things
+           'Path', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'PATHEXT',
+           # DJGPP-specific things
            'DJDIR', 'DJGPP', 'SHELL', 'COMSPEC', 'HOSTNAME', 'LFN',
            'FNCASE', '387', 'EMU387', 'GROUP'
           ) {
@@ -192,12 +215,8 @@ sub toplevel
   # Make sure our compares are not foiled by locale differences
 
   $makeENV{LC_ALL} = 'C';
-
-  # Replace the environment with the new one
-  #
-  %origENV = %ENV unless $^O eq 'VMS';
-
-  resetENV();
+  $makeENV{LANG} = 'C';
+  $makeENV{LANGUAGE} = 'C';
 
   $| = 1;                     # unbuffered output
 
@@ -207,6 +226,7 @@ sub toplevel
   $detail = 0;                # detailed verbosity
   $keep = 0;                  # keep temp files around
   $workdir = "work";          # The directory where the test will start running
+  $tempdir = "_tmp";          # A temporary directory
   $scriptdir = "scripts";     # The directory where we find the test scripts
   $tmpfilesuffix = "t";       # the suffix used on tmpfiles
   $default_output_stack_level = 0;  # used by attach_default_output, etc.
@@ -216,11 +236,39 @@ sub toplevel
 
   &get_osname;  # sets $osname, $vos, $pathsep, and $short_filenames
 
+  $perl_name = which($perl_name);
+
+  # See if we have a diff
+  $diff_name = which('diff');
+  if (!$diff_name) {
+      print "No diff found; differences will not be shown\n";
+  }
+
   &set_defaults;  # suite-defined
 
   &parse_command_line (@ARGV);
 
   print "OS name = '$osname'\n" if $debug;
+
+  $temppath = File::Spec->rel2abs($tempdir);
+
+  if (-d $temppath) {
+    print "Clearing $temppath...\n";
+    &remove_directory_tree("$temppath/")
+      or &error ("Couldn't wipe out $temppath: $!\n");
+  } else {
+    mkdir ($temppath, 0777) or error ("Cannot mkdir $temppath: $!\n");
+  }
+
+  # This is used by POSIX systems
+  $makeENV{TMPDIR} = $temppath;
+
+  # These are used on Windows
+  $makeENV{TMP} = $temppath;
+  $makeENV{TEMP} = $temppath;
+
+  # Replace the environment with the new one
+  resetENV();
 
   $workpath = "$cwdslash$workdir";
   $scriptpath = "$cwdslash$scriptdir";
@@ -249,9 +297,9 @@ sub toplevel
   if (-d $workpath) {
     print "Clearing $workpath...\n";
     &remove_directory_tree("$workpath/")
-        or &error ("Couldn't wipe out $workpath: $!\n");
+      or &error ("Couldn't wipe out $workpath: $!\n");
   } else {
-    mkdir ($workpath, 0777) or &error ("Couldn't mkdir $workpath: $!\n");
+    mkdir ($workpath, 0777) or &error ("Cannot mkdir $workpath: $!\n");
   }
 
   if (!-d $scriptpath) {
@@ -265,8 +313,8 @@ sub toplevel
         $dir = $1;
         push (@rmdirs, $dir);
         -d "$workpath/$dir"
-           or mkdir ("$workpath/$dir", 0777)
-           or &error ("Couldn't mkdir $workpath/$dir: $!\n");
+            or mkdir ("$workpath/$dir", 0777)
+            or &error ("Couldn't mkdir $workpath/$dir: $!\n");
       }
     }
   } else {
@@ -305,6 +353,8 @@ sub toplevel
     rmdir ("$workpath/$dir");
   }
 
+  rmdir ($temppath);
+
   $| = 1;
 
   $categories_failed = $categories_run - $categories_passed;
@@ -316,6 +366,11 @@ sub toplevel
     print " in $categories_failed Categor";
     print ($categories_failed == 1 ? "y" : "ies");
     print " Failed (See .$diffext* files in $workdir dir for details) :-(\n\n";
+    return 0;
+  } elsif ($some_test_failed) {
+      # Something failed but no tests were marked failed... probably a syntax
+      # error in a test script
+    print "\nSome tests failed (See output for details) :-(\n\n";
     return 0;
   }
 
@@ -331,13 +386,15 @@ sub get_osname
 {
   # Set up an initial value.  In perl5 we can do it the easy way.
   $osname = defined($^O) ? $^O : '';
+  $vos = 0;
+  $pathsep = "/";
 
   # find the type of the port.  We do this up front to have a single
   # point of change if it needs to be tweaked.
   #
   # This is probably not specific enough.
   #
-  if ($osname =~ /MSWin32/i || $osname =~ /Windows/i
+  if ($osname =~ /MSWin32/i || $osname =~ /Windows/i || $osname =~ /msys/i
       || $osname =~ /MINGW32/i || $osname =~ /CYGWIN_NT/i) {
     $port_type = 'W32';
   }
@@ -366,10 +423,7 @@ sub get_osname
     $port_type = 'UNIX';
   }
 
-  if ($osname eq 'VMS')
-  {
-    $vos = 0;
-    $pathsep = "/";
+  if ($osname eq 'VMS') {
     return;
   }
 
@@ -399,7 +453,7 @@ sub get_osname
     $vos = 1;
     $pathsep = ">";
 
-  } else {
+  } elsif ($osname eq '') {
     # the following is regrettably gnarly, but it seems to be the only way
     # to not get ugly error messages if uname can't be found.
     # Hmmm, BSD/OS 2.0's uname -a is excessively verbose.  Let's try it
@@ -414,8 +468,6 @@ sub get_osname
         $osname = "(something posixy)";
       }
     }
-    $vos = 0;
-    $pathsep = "/";
   }
 
   if (! $short_filenames) {
@@ -509,12 +561,12 @@ sub print_centered
 sub print_banner
 {
   # $testee is suite-defined
-  my $info = "Running tests for $testee on $osname\n";
-  my $len = &max (length($info), length($testee_version), 73) + 5;
+  my $info = "Running tests for $testee on $osname";
+  my $len = &max (length($info), length($testee_version), 77) + 2;
   my $line = ("-" x $len) . "\n";
 
   &print_centered ($len, $line);
-  &print_centered ($len, $info);
+  &print_centered ($len, $info."\n");
   &print_centered ($len, $testee_version);
   &print_centered ($len, $line);
   print "\n";
@@ -527,11 +579,31 @@ sub run_all_tests
 
   $categories_run = 0;
 
+  # Make a copy of STDIN so we can reset it
+  open(INCOPY, "<&STDIN");
+
+  # Leave enough space in the extensions to append a number, even
+  # though it needs to fit into 8+3 limits.
+  if ($short_filenames) {
+    $logext = 'l';
+    $diffext = 'd';
+    $baseext = 'b';
+    $runext = 'r';
+    $extext = '';
+  } else {
+    $logext = 'log';
+    $diffext = 'diff';
+    $baseext = 'base';
+    $runext = 'run';
+    $extext = '.';
+  }
+
   $lasttest = '';
   # $testname is published
   foreach $testname (sort @TESTS) {
     # Skip duplicates on VMS caused by logical name search lists.
     next if $testname eq $lasttest;
+
     $lasttest = $testname;
     $suite_passed = 1;       # reset by test on failure
     $num_of_logfiles = 0;
@@ -543,21 +615,6 @@ sub run_all_tests
     $perl_testname = "$scriptpath$pathsep$testname";
     $testname =~ s/(\.pl|\.perl)$//;
     $testpath = "$workpath$pathsep$testname";
-    # Leave enough space in the extensions to append a number, even
-    # though it needs to fit into 8+3 limits.
-    if ($short_filenames) {
-      $logext = 'l';
-      $diffext = 'd';
-      $baseext = 'b';
-      $runext = 'r';
-      $extext = '';
-    } else {
-      $logext = 'log';
-      $diffext = 'diff';
-      $baseext = 'base';
-      $runext = 'run';
-      $extext = '.';
-    }
     $extext = '_' if $^O eq 'VMS';
     $log_filename = "$testpath.$logext";
     $diff_filename = "$testpath.$diffext";
@@ -571,7 +628,7 @@ sub run_all_tests
 
     $output = "........................................................ ";
 
-    substr($output,0,length($testname)) = "$testname ";
+    substr($output, 0, length($testname)) = "$testname ";
 
     print $output;
 
@@ -580,6 +637,9 @@ sub run_all_tests
 
     # Run the test!
     $code = do $perl_testname;
+
+    # Reset STDIN from the copy in case it was changed
+    open(STDIN, "<&INCOPY");
 
     ++$categories_run;
     $total_tests_run += $tests_run;
@@ -594,6 +654,7 @@ sub run_all_tests
         warn "\n*** Couldn't parse $perl_testname\n";
       }
       $status = "FAILED ($tests_passed/$tests_run passed)";
+      $some_test_failed = 1;
 
     } elsif ($code == -1) {
       # Skipped... not supported
@@ -605,14 +666,17 @@ sub run_all_tests
       # the suite forgot to end with "1;".
       warn "\n*** Test returned $code\n";
       $status = "FAILED ($tests_passed/$tests_run passed)";
+      $some_test_failed = 1;
 
     } elsif ($tests_run == 0) {
       # Nothing was done!!
       $status = "FAILED (no tests found!)";
+      $some_test_failed = 1;
 
     } elsif ($tests_run > $tests_passed) {
       # Lose!
       $status = "FAILED ($tests_passed/$tests_run passed)";
+      $some_test_failed = 1;
 
     } else {
       # Win!
@@ -653,6 +717,8 @@ sub run_all_tests
 
     print "$status\n";
   }
+
+  close(INCOPY);
 }
 
 # If the keep flag is not set, this subroutine deletes all filenames that
@@ -752,183 +818,194 @@ sub error
   die "$caller: $message";
 }
 
+sub compare_answer_vms
+{
+  my ($kgo, $log) = @_;
+
+  # VMS has extra blank lines in output sometimes.
+  # Ticket #41760
+  $log =~ s/\n\n+/\n/gm;
+  $log =~ s/\A\n+//g;
+  return 1 if ($kgo eq $log);
+
+  # VMS adding a "Waiting for unfinished jobs..."
+  # Remove it for now to see what else is going on.
+  $log =~ s/^.+\*\*\* Waiting for unfinished jobs.+$//m;
+  $log =~ s/\n\n/\n/gm;
+  $log =~ s/^\n+//gm;
+  return 1 if ($log eq $kgo);
+
+  # VMS wants target device to exist or generates an error,
+  # Some test tagets look like VMS devices and trip this.
+  $log =~ s/^.+\: no such device or address.*$//gim;
+  $log =~ s/\n\n/\n/gm;
+  $log =~ s/^\n+//gm;
+  return 1 if ($log eq $kgo);
+
+  # VMS error message has a different case
+  $log =~ s/no such file /No such file /gm;
+  return 1 if ($log eq $kgo);
+
+  # VMS is putting comas instead of spaces in output
+  $log =~ s/,/ /gm;
+  return 1 if ($log eq $kgo);
+
+  # VMS Is sometimes adding extra leading spaces to output?
+  {
+     (my $mlog = $log) =~ s/^ +//gm;
+     return 1 if ($mlog eq $kgo);
+  }
+
+  # VMS port not handling POSIX encoded child status
+  # Translate error case it for now.
+  $log =~ s/0x1035a00a/1/gim;
+  return 1 if ($log =~ /\Q$kgo\E/i);
+
+  $log =~ s/0x1035a012/2/gim;
+  return 1 if ($log eq $kgo);
+
+  # Tests are using a UNIX null command, temp hack
+  # until this can be handled by the VMS port.
+  # ticket # 41761
+  $log =~ s/^.+DCL-W-NOCOMD.*$//gim;
+  $log =~ s/\n\n+/\n/gm;
+  $log =~ s/^\n+//gm;
+  return 1 if ($log eq $kgo);
+
+  # Tests are using exit 0;
+  # this generates a warning that should stop the make, but does not
+  $log =~ s/^.+NONAME-W-NOMSG.*$//gim;
+  $log =~ s/\n\n+/\n/gm;
+  $log =~ s/^\n+//gm;
+  return 1 if ($log eq $kgo);
+
+  # VMS is sometimes adding single quotes to output?
+  $log =~ s/\'//gm;
+  return 1 if ($log eq $kgo);
+
+  # And missing an extra space in output
+  $kgo =~ s/\h\h+/ /gm;
+  return 1 if ($log eq $kgo);
+
+  # VMS adding ; to end of some lines.
+  $log =~ s/;\n/\n/gm;
+  return 1 if ($log eq $kgo);
+
+  # VMS adding trailing space to end of some quoted lines.
+  $log =~ s/\h+\n/\n/gm;
+  return 1 if ($log eq $kgo);
+
+  # And VMS missing leading blank line
+  $kgo =~ s/\A\n//g;
+  return 1 if ($log eq $kgo);
+
+  # Unix double quotes showing up as single quotes on VMS.
+  $kgo =~ s/\"//g;
+  return 1 if ($log eq $kgo);
+
+  return 0;
+}
+
+sub compare_answer
+{
+  my ($kgo, $log) = @_;
+  my ($mkgo, $mlog);
+
+  # For make, get rid of any time skew error before comparing--too bad this
+  # has to go into the "generic" driver code :-/
+  $log =~ s/^.*modification time .*in the future.*\n//gm;
+  $log =~ s/^.*Clock skew detected.*\n//gm;
+  return 1 if ($log eq $kgo);
+
+  # Get rid of newline differences, forever
+  $kgo =~ s,\r\n,\n,gs;
+  $log =~ s,\r\n,\n,gs;
+  return 1 if ($log eq $kgo);
+
+  # Keep these in case it's a regex
+  $mkgo = $kgo;
+  $mlog = $log;
+
+  # Some versions of Perl on Windows use /c instead of C:
+  $mkgo =~ s,\b([A-Z]):,/\L$1,g;
+  $mlog =~ s,\b([A-Z]):,/\L$1,g;
+  return 1 if ($mlog eq $mkgo);
+
+  # See if it is a backslash problem (only on W32?)
+  $mkgo =~ tr,\\,/,;
+  $mlog =~ tr,\\,/,;
+  return 1 if ($mlog eq $mkgo);
+
+  # VMS is a whole thing...
+  return 1 if ($^O eq 'VMS' && compare_answer_vms($kgo, $log));
+
+  # See if the answer might be a regex.
+  if ($kgo =~ m,^/(.+)/$,) {
+    # Check the regex against both the original and modified strings
+    return 1 if ($log =~ /$1/);
+    return 1 if ($mlog =~ /$1/);
+  }
+
+  return 0;
+}
+
+my %old_tempfiles = ();
+
 sub compare_output
 {
   my ($answer, $logfile) = @_;
-  my ($slurp, $answer_matched) = ('', 0);
+  my ($slurp, $matched, $extra) = ('', 0, 0);
 
   ++$tests_run;
 
+  my @tf = ();
+  foreach my $file (glob(File::Spec->catfile($temppath, "*"))) {
+    if (!exists $old_tempfiles{$file}) {
+      push @tf, $file;
+      $old_tempfiles{$file} = 1;
+    }
+  }
+  if (@tf) {
+    open (LOGFILE, '>>', $logfile) or die "Cannot open log file $logfile: $!\n";
+    print LOGFILE "Leftover temporary files: @tf\n";
+    close (LOGFILE);
+    $extra = 1;
+  }
+
   if (! defined $answer) {
     print "Ignoring output ........ " if $debug;
-    $answer_matched = 1;
+    $matched = 1;
   } else {
     print "Comparing output ........ " if $debug;
 
-    $slurp = &read_file_into_string ($logfile);
-
-    # For make, get rid of any time skew error before comparing--too bad this
-    # has to go into the "generic" driver code :-/
-    $slurp =~ s/^.*modification time .*in the future.*\n//gm;
-    $slurp =~ s/^.*Clock skew detected.*\n//gm;
-
-    if ($slurp eq $answer) {
-        $answer_matched = 1;
-    } else {
-      # See if it is a slash or CRLF problem
-      my ($answer_mod, $slurp_mod) = ($answer, $slurp);
-
-      $answer_mod =~ tr,\\,/,;
-      $answer_mod =~ s,\r\n,\n,gs;
-
-      $slurp_mod =~ tr,\\,/,;
-      $slurp_mod =~ s,\r\n,\n,gs;
-
-      $answer_matched = ($slurp_mod eq $answer_mod);
-      if ($^O eq 'VMS') {
-
-        # VMS has extra blank lines in output sometimes.
-        # Ticket #41760
-        if (!$answer_matched) {
-          $slurp_mod =~ s/\n\n+/\n/gm;
-          $slurp_mod =~ s/\A\n+//g;
-          $answer_matched = ($slurp_mod eq $answer_mod);
-        }
-
-        # VMS adding a "Waiting for unfinished jobs..."
-        # Remove it for now to see what else is going on.
-        if (!$answer_matched) {
-          $slurp_mod =~ s/^.+\*\*\* Waiting for unfinished jobs.+$//m;
-          $slurp_mod =~ s/\n\n/\n/gm;
-          $slurp_mod =~ s/^\n+//gm;
-          $answer_matched = ($slurp_mod eq $answer_mod);
-        }
-
-        # VMS wants target device to exist or generates an error,
-        # Some test tagets look like VMS devices and trip this.
-        if (!$answer_matched) {
-          $slurp_mod =~ s/^.+\: no such device or address.*$//gim;
-          $slurp_mod =~ s/\n\n/\n/gm;
-          $slurp_mod =~ s/^\n+//gm;
-          $answer_matched = ($slurp_mod eq $answer_mod);
-        }
-
-        # VMS error message has a different case
-        if (!$answer_matched) {
-          $slurp_mod =~ s/no such file /No such file /gm;
-          $answer_matched = ($slurp_mod eq $answer_mod);
-        }
-
-        # VMS is putting comas instead of spaces in output
-        if (!$answer_matched) {
-          $slurp_mod =~ s/,/ /gm;
-          $answer_matched = ($slurp_mod eq $answer_mod);
-        }
-
-        # VMS Is sometimes adding extra leading spaces to output?
-        if (!$answer_matched) {
-           my $slurp_mod = $slurp_mod;
-           $slurp_mod =~ s/^ +//gm;
-           $answer_matched = ($slurp_mod eq $answer_mod);
-        }
-
-        # VMS port not handling POSIX encoded child status
-        # Translate error case it for now.
-        if (!$answer_matched) {
-          $slurp_mod =~ s/0x1035a00a/1/gim;
-          $answer_matched = 1 if $slurp_mod =~ /\Q$answer_mod\E/i;
-
-        }
-        if (!$answer_matched) {
-          $slurp_mod =~ s/0x1035a012/2/gim;
-          $answer_matched = ($slurp_mod eq $answer_mod);
-        }
-
-        # Tests are using a UNIX null command, temp hack
-        # until this can be handled by the VMS port.
-        # ticket # 41761
-        if (!$answer_matched) {
-          $slurp_mod =~ s/^.+DCL-W-NOCOMD.*$//gim;
-          $slurp_mod =~ s/\n\n+/\n/gm;
-          $slurp_mod =~ s/^\n+//gm;
-          $answer_matched = ($slurp_mod eq $answer_mod);
-        }
-        # Tests are using exit 0;
-        # this generates a warning that should stop the make, but does not
-        if (!$answer_matched) {
-          $slurp_mod =~ s/^.+NONAME-W-NOMSG.*$//gim;
-          $slurp_mod =~ s/\n\n+/\n/gm;
-          $slurp_mod =~ s/^\n+//gm;
-          $answer_matched = ($slurp_mod eq $answer_mod);
-        }
-
-        # VMS is sometimes adding single quotes to output?
-        if (!$answer_matched) {
-          my $noq_slurp_mod = $slurp_mod;
-          $noq_slurp_mod =~ s/\'//gm;
-          $answer_matched = ($noq_slurp_mod eq $answer_mod);
-
-          # And missing an extra space in output
-          if (!$answer_matched) {
-            $noq_answer_mod = $answer_mod;
-            $noq_answer_mod =~ s/\h\h+/ /gm;
-            $answer_matched = ($noq_slurp_mod eq $noq_answer_mod);
-          }
-
-          # VMS adding ; to end of some lines.
-          if (!$answer_matched) {
-            $noq_slurp_mod =~ s/;\n/\n/gm;
-            $answer_matched = ($noq_slurp_mod eq $noq_answer_mod);
-          }
-
-          # VMS adding trailing space to end of some quoted lines.
-          if (!$answer_matched) {
-            $noq_slurp_mod =~ s/\h+\n/\n/gm;
-            $answer_matched = ($noq_slurp_mod eq $noq_answer_mod);
-          }
-
-          # And VMS missing leading blank line
-          if (!$answer_matched) {
-            $noq_answer_mod =~ s/\A\n//g;
-            $answer_matched = ($noq_slurp_mod eq $noq_answer_mod);
-          }
-
-          # Unix double quotes showing up as single quotes on VMS.
-          if (!$answer_matched) {
-            $noq_answer_mod =~ s/\"//g;
-            $answer_matched = ($noq_slurp_mod eq $noq_answer_mod);
-          }
-        }
-      }
-
-      # If it still doesn't match, see if the answer might be a regex.
-      if (!$answer_matched && $answer =~ m,^/(.+)/$,) {
-        $answer_matched = ($slurp =~ /$1/);
-        if (!$answer_matched && $answer_mod =~ m,^/(.+)/$,) {
-            $answer_matched = ($slurp_mod =~ /$1/);
-        }
-      }
-    }
+    $matched = compare_answer($answer, &read_file_into_string ($logfile));
   }
 
-  if ($answer_matched && $test_passed) {
+  if ($keep || ! $matched) {
+    &create_file(&get_basefile, $answer);
+    &create_file(&get_runfile, $command_string);
+  }
+
+  if ($matched && $test_passed && !$extra) {
     print "ok\n" if $debug;
     ++$tests_passed;
     return 1;
   }
 
-  if (! $answer_matched) {
+  if (! $matched) {
     print "DIFFERENT OUTPUT\n" if $debug;
-
-    &create_file(&get_basefile, $answer);
-    &create_file(&get_runfile, $command_string);
 
     print "\nCreating Difference File ...\n" if $debug;
 
     # Create the difference file
-
-    my $command = "diff -c " . &get_basefile . " " . $logfile;
-    &run_command_with_output(get_difffile(), $command);
+    my $base = get_basefile();
+    if ($diff_name) {
+        &run_command_with_output(get_difffile(),
+                                 "$diff_name -c $base $logfile");
+    } else {
+        create_file(get_difffile(),
+                    "Log file $logfile differs from base file $base\n");
+    }
   }
 
   return 0;
@@ -1026,9 +1103,10 @@ sub _run_with_timeout
       $code = (($vms_code & 0xFFF) >> 3) * 256;
     }
 
-  } elsif ($port_type eq 'W32') {
+  } elsif ($port_type eq 'W32' && $^O ne 'msys') {
+    # Using ActiveState Perl (?)
     my $pid = system(1, @_);
-    $pid > 0 or die "Cannot execute $_[0]\n";
+    $pid > 0 or die "Cannot execute $_[0]: $!\n";
     local $SIG{ALRM} = sub {
       my $e = $ERRSTACK[0];
       print $e "\nTest timed out after $test_timeout seconds\n";

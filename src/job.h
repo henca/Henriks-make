@@ -1,5 +1,5 @@
 /* Definitions for managing subprocesses in GNU Make.
-Copyright (C) 1992-2020 Free Software Foundation, Inc.
+Copyright (C) 1992-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,7 +12,7 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "output.h"
 
@@ -68,11 +68,12 @@ struct child
 extern struct child *children;
 
 /* A signal handler for SIGCHLD, if needed.  */
-RETSIGTYPE child_handler (int sig);
+void child_handler (int sig);
 int is_bourne_compatible_shell(const char *path);
 void new_job (struct file *file);
 void reap_children (int block, int err);
 void start_waiting_jobs (void);
+void free_childbase (struct childbase* child);
 
 char **construct_command_argv (char *line, char **restp, struct file *file,
                                int cmd_flags, char** batch_file);
@@ -81,10 +82,8 @@ pid_t child_execute_job (struct childbase *child, int good_stdin, char **argv);
 
 #ifdef _AMIGA
 void exec_command (char **argv) NORETURN;
-#elif defined(__EMX__)
-int exec_command (char **argv, char **envp);
 #else
-void exec_command (char **argv, char **envp) NORETURN;
+pid_t exec_command (char **argv, char **envp);
 #endif
 
 void unblock_all_sigs (void);

@@ -13,12 +13,21 @@ my $details = "The various shells that this test uses are the default"
 
 # Only bother with this on UNIX systems
 $port_type eq 'UNIX' or return -1;
+$^O =~ /cygwin/ and return -1;
 
+my @shbangs = ('', '#!/bin/sh', "#!$perl_name");
+my @shells = ('', 'SHELL=/bin/sh');
+
+# Try whatever shell the user has, as long as it's not a C shell.
+# The C shell is not usable with make, due to not correctly handling
+# file descriptors and possibly other issues.
 my $usersh = $origENV{SHELL};
-my $answer = 'hello, world';
+if ($usersh !~ /csh/) {
+    push @shbangs, ("#!$usersh");
+    push @shells, ("SHELL=$usersh");
+}
 
-my @shbangs = ('', '#!/bin/sh', "#!$usersh", "#!$perl_name");
-my @shells = ('', 'SHELL=/bin/sh', "SHELL=$usersh");
+my $answer = 'hello, world';
 
 # tests [0-11]
 # Have a makefile with various SHELL= exec a shell program with varios
@@ -36,7 +45,7 @@ for my $shbang (@shbangs) {
         close(CMD);
         chmod 0700, $cmd;
 
-        run_make_test("# $shbang\n# $shell" . q!
+        run_make_test("# shbang=$shbang\n# shell=$shell" . q!
 all:; @$(CMD)
 !, "$shell CMD=$cmd", "$answer\n");
 

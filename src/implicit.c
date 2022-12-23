@@ -1,5 +1,5 @@
 /* Implicit rule searching for GNU Make.
-Copyright (C) 1988-2020 Free Software Foundation, Inc.
+Copyright (C) 1988-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,7 +12,7 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 #include "filedef.h"
@@ -22,6 +22,7 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 #include "variable.h"
 #include "job.h"      /* struct child, used inside commands.h */
 #include "commands.h" /* set_file_variables */
+#include "shuffle.h"
 #include <assert.h>
 
 static int pattern_search (struct file *file, int archive,
@@ -159,6 +160,7 @@ struct patdeps
     unsigned int ignore_mtime : 1;
     unsigned int ignore_automatic_vars : 1;
     unsigned int is_explicit : 1;
+    unsigned int wait_here : 1;
   };
 
 /* This structure stores information about pattern rules that we need
@@ -230,7 +232,11 @@ pattern_search (struct file *file, int archive,
 
   /* Names of possible dependencies are constructed in this buffer.
      We may replace % by $(*F) for second expansion, increasing the length.  */
-  char *depname = alloca (namelen + max_pattern_dep_length + 4);
+  size_t deplen = namelen + max_pattern_dep_length + 4;
+  char *depname = alloca (deplen);
+#ifndef NDEBUG
+  char *dend = depname + deplen;
+#endif
 
   /* The start and length of the stem of FILENAME for the current rule.  */
   const char *stem = 0;
@@ -521,10 +527,6 @@ pattern_search (struct file *file, int archive,
           if (rule->deps == 0)
             break;
 
-          /* Temporary assign STEM to file->stem (needed to set file
-             variables below).   */
-          file->stem = stem_str;
-
           /* Mark this rule as in use so a recursive pattern_search won't try
              to use it.  */
           rule->in_use = 1;
@@ -539,7 +541,6 @@ pattern_search (struct file *file, int archive,
           while (1)
             {
               struct dep *dl, *d;
-              char *p;
 
               /* If we're out of name to parse, start the next prereq.  */
               if (! nptr)
@@ -553,34 +554,32 @@ pattern_search (struct file *file, int archive,
               /* If we don't need a second expansion, just replace the %.  */
               if (! dep->need_2nd_expansion)
                 {
+                  char *p;
                   int is_explicit = 1;
-                  p = strchr (nptr, '%');
-                  if (p == 0)
+                  const char *cp = strchr (nptr, '%');
+                  if (cp == 0)
                     strcpy (depname, nptr);
                   else
                     {
                       char *o = depname;
                       if (check_lastslash)
-                        {
-                          memcpy (o, filename, pathlen);
-                          o += pathlen;
-                        }
-                      memcpy (o, nptr, p - nptr);
-                      o += p - nptr;
-                      memcpy (o, stem, stemlen);
-                      o += stemlen;
-                      strcpy (o, p + 1);
+                        o = mempcpy (o, filename, pathlen);
+                      o = mempcpy (o, nptr, cp - nptr);
+                      o = mempcpy (o, stem, stemlen);
+                      strcpy (o, cp + 1);
                       is_explicit = 0;
                     }
 
                   /* Parse the expanded string.  It might have wildcards.  */
                   p = depname;
-                  dl = PARSE_FILE_SEQ (&p, struct dep, MAP_NUL, NULL, PARSEFS_ONEWORD);
+                  dl = PARSE_FILE_SEQ (&p, struct dep, MAP_NUL, NULL,
+                                       PARSEFS_ONEWORD|PARSEFS_WAIT);
                   for (d = dl; d != NULL; d = d->next)
                     {
                       ++deps_found;
                       d->ignore_mtime = dep->ignore_mtime;
                       d->ignore_automatic_vars = dep->ignore_automatic_vars;
+                      d->wait_here |= dep->wait_here;
                       d->is_explicit = is_explicit;
                     }
 
@@ -601,18 +600,22 @@ pattern_search (struct file *file, int archive,
                 {
                   int add_dir = 0;
                   size_t len;
+                  const char *end;
                   struct dep **dptr;
                   int is_explicit;
+                  const char *cp;
+                  char *p;
 
                   nptr = get_next_word (nptr, &len);
                   if (nptr == 0)
                     continue;
+                  end = nptr + len;
 
-                  /* See this is a transition to order-only prereqs.  */
+                  /* See if this is a transition to order-only prereqs.  */
                   if (! order_only && len == 1 && nptr[0] == '|')
                     {
                       order_only = 1;
-                      nptr += len;
+                      nptr = end;
                       continue;
                     }
 
@@ -627,8 +630,8 @@ pattern_search (struct file *file, int archive,
                      (since $* and $(*F) are simple variables) there won't be
                      additional re-expansion of the stem.  */
 
-                  p = lindex (nptr, nptr + len, '%');
-                  if (p == 0)
+                  cp = lindex (nptr, end, '%');
+                  if (cp == 0)
                     {
                       memcpy (depname, nptr, len);
                       depname[len] = '\0';
@@ -636,42 +639,67 @@ pattern_search (struct file *file, int archive,
                     }
                   else
                     {
-                      size_t i = p - nptr;
+                      /* Go through all % between NPTR and END.
+                         Copy contents of [NPTR, END) to depname, with the
+                         first % after NPTR and then each first % after white
+                         space replaced with $* or $(*F).  depname has enough
+                         room to substitute each % with $(*F).  */
                       char *o = depname;
-                      memcpy (o, nptr, i);
-                      o += i;
-                      if (check_lastslash)
-                        {
-                          add_dir = 1;
-                          memcpy (o, "$(*F)", 5);
-                          o += 5;
-                        }
-                      else
-                        {
-                          memcpy (o, "$*", 2);
-                          o += 2;
-                        }
-                      memcpy (o, p + 1, len - i - 1);
-                      o[len - i - 1] = '\0';
+
                       is_explicit = 0;
+                      for (;;)
+                        {
+                          size_t i = cp - nptr;
+                          assert (o + i < dend);
+                          o = mempcpy (o, nptr, i);
+                          if (check_lastslash)
+                            {
+                              add_dir = 1;
+                              assert (o + 5 < dend);
+                              o = mempcpy (o, "$(*F)", 5);
+                            }
+                          else
+                            {
+                              assert (o + 2 < dend);
+                              o = mempcpy (o, "$*", 2);
+                            }
+                          assert (o < dend);
+                          ++cp;
+                          assert (cp <= end);
+                          nptr = cp;
+                          if (nptr == end)
+                            break;
+
+                          /* Skip the rest of this word then find the next %.
+                             No need to worry about order-only, or nested
+                             functions: NPTR went though get_next_word.  */
+                          while (cp < end && ! END_OF_TOKEN (*cp))
+                            ++cp;
+                          cp = lindex (cp, end, '%');
+                          if (cp == 0)
+                            break;
+                        }
+                        len = end - nptr;
+                        memcpy (o, nptr, len);
+                        o[len] = '\0';
                     }
 
                   /* Set up for the next word.  */
-                  nptr += len;
+                  nptr = end;
 
                   /* Initialize and set file variables if we haven't already
                      done so. */
                   if (!file_vars_initialized)
                     {
                       initialize_file_variables (file, 0);
-                      set_file_variables (file);
+                      set_file_variables (file, stem_str);
                       file_vars_initialized = 1;
                     }
                   /* Update the stem value in $* for this rule.  */
                   else if (!file_variables_set)
                     {
                       define_variable_for_file (
-                        "*", 1, file->stem, o_automatic, 0, file);
+                        "*", 1, stem_str, o_automatic, 0, file);
                       file_variables_set = 1;
                     }
 
@@ -685,7 +713,8 @@ pattern_search (struct file *file, int archive,
                       /* Parse the expanded string. */
                       struct dep *dp = PARSE_FILE_SEQ (&p, struct dep,
                                                        order_only ? MAP_NUL : MAP_PIPE,
-                                                       add_dir ? pathdir : NULL, PARSEFS_NONE);
+                                                       add_dir ? pathdir : NULL,
+                                                       PARSEFS_WAIT);
                       *dptr = dp;
 
                       for (d = dp; d != NULL; d = d->next)
@@ -750,6 +779,7 @@ pattern_search (struct file *file, int archive,
                   memset (pat, '\0', sizeof (struct patdeps));
                   pat->ignore_mtime = d->ignore_mtime;
                   pat->ignore_automatic_vars = d->ignore_automatic_vars;
+                  pat->wait_here = d->wait_here;
                   pat->is_explicit = d->is_explicit;
 
                   DBS (DB_IMPLICIT,
@@ -758,6 +788,9 @@ pattern_search (struct file *file, int archive,
                         : _("Trying implicit prerequisite '%s'.\n"), d->name));
 
                   df = lookup_file (d->name);
+
+                  if (df && df->is_explicit)
+                    pat->is_explicit = 1;
 
                   /* If we found a file for the dep, set its intermediate flag.
                      df->is_explicit is set when the dep file is mentioned
@@ -848,7 +881,7 @@ pattern_search (struct file *file, int archive,
                   if (intermed_ok)
                     {
                       DBS (DB_IMPLICIT,
-                           (d->is_explicit
+                           (d->is_explicit || (df && df->is_explicit)
                             ? _("Looking for a rule with explicit file '%s'.\n")
                             : _("Looking for a rule with intermediate file '%s'.\n"),
                             d->name));
@@ -908,10 +941,6 @@ pattern_search (struct file *file, int archive,
                 break;
             }
 
-          /* Reset the stem in FILE. */
-
-          file->stem = 0;
-
           /* This rule is no longer 'in use' for recursive searches.  */
           rule->in_use = 0;
 
@@ -970,16 +999,16 @@ pattern_search (struct file *file, int archive,
           f->cmds = imf->cmds;
           f->stem = imf->stem;
           /* Setting target specific variables for a file causes the file to be
-           * entered to the database as a prerequisite. Implicit search then
-           * treats this file as explicitly mentioned. Preserve target specific
-           * variables of this file.  */
+             entered to the database as a prerequisite. Implicit search then
+             treats this file as explicitly mentioned. Preserve target specific
+             variables of this file.  */
           merge_variable_set_lists(&f->variables, imf->variables);
           f->pat_variables = imf->pat_variables;
           f->pat_searched = imf->pat_searched;
           f->also_make = imf->also_make;
           f->is_target = 1;
           f->is_explicit |= imf->is_explicit || pat->is_explicit;
-          f->notintermediate |= imf->notintermediate;
+          f->notintermediate |= imf->notintermediate || no_intermediates;
           f->intermediate |= !f->is_explicit && !f->notintermediate;
           f->tried_implicit = 1;
 
@@ -999,6 +1028,7 @@ pattern_search (struct file *file, int archive,
       dep->ignore_mtime = pat->ignore_mtime;
       dep->is_explicit = pat->is_explicit;
       dep->ignore_automatic_vars = pat->ignore_automatic_vars;
+      dep->wait_here = pat->wait_here;
       s = strcache_add (pat->name);
       if (recursions)
         dep->name = s;
@@ -1024,7 +1054,13 @@ pattern_search (struct file *file, int archive,
 
       dep->next = file->deps;
       file->deps = dep;
+
+      /* The file changed its dependencies; schedule the shuffle.  */
+      file->was_shuffled = 0;
     }
+
+  if (!file->was_shuffled)
+    shuffle_deps_recursive (file->deps);
 
   if (!tryrules[foundrule].checked_lastslash)
     {
@@ -1054,7 +1090,7 @@ pattern_search (struct file *file, int archive,
       {
         if (f->precious)
           file->precious = 1;
-        if (f->notintermediate)
+        if (f->notintermediate || no_intermediates)
           file->notintermediate = 1;
       }
   }
@@ -1072,11 +1108,9 @@ pattern_search (struct file *file, int archive,
           struct dep *new = alloc_dep ();
 
           /* GKM FIMXE: handle '|' here too */
-          memcpy (p, rule->targets[ri],
-                  rule->suffixes[ri] - rule->targets[ri] - 1);
-          p += rule->suffixes[ri] - rule->targets[ri] - 1;
-          memcpy (p, file->stem, fullstemlen);
-          p += fullstemlen;
+          p = mempcpy (p, rule->targets[ri],
+                       rule->suffixes[ri] - rule->targets[ri] - 1);
+          p = mempcpy (p, file->stem, fullstemlen);
           memcpy (p, rule->suffixes[ri],
                   rule->lens[ri] - (rule->suffixes[ri] - rule->targets[ri])+1);
           new->name = strcache_add (nm);
@@ -1089,7 +1123,7 @@ pattern_search (struct file *file, int archive,
             {
               if (f->precious)
                 new->file->precious = 1;
-              if (f->notintermediate)
+              if (f->notintermediate || no_intermediates)
                 new->file->notintermediate = 1;
             }
 

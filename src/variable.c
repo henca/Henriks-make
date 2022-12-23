@@ -1,5 +1,5 @@
 /* Internals of variables for GNU Make.
-Copyright (C) 1988-2020 Free Software Foundation, Inc.
+Copyright (C) 1988-2022 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -12,29 +12,34 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program.  If not, see <http://www.gnu.org/licenses/>.  */
+this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 
 #include <assert.h>
 
 #include "filedef.h"
+#include "debug.h"
 #include "dep.h"
 #include "job.h"
 #include "commands.h"
 #include "variable.h"
+#include "os.h"
 #include "rule.h"
 #ifdef WINDOWS32
 #include "pathstuff.h"
 #endif
 #include "hash.h"
 
+/* Incremented every time we enter target_environment().  */
+unsigned long long env_recursion = 0;
+
 /* Incremented every time we add or remove a global variable.  */
-static unsigned long variable_changenum;
+static unsigned long variable_changenum = 0;
 
 /* Chain of all pattern-specific variables.  */
 
-static struct pattern_var *pattern_vars;
+static struct pattern_var *pattern_vars = NULL;
 
 /* Pointer to the last struct in the pack of a specific size, from 1 to 255.*/
 
@@ -378,7 +383,6 @@ lookup_special_var (struct variable *var)
 {
   static unsigned long last_changenum = 0;
 
-
   /* This one actually turns out to be very hard, due to the way the parser
      records targets.  The way it works is that target information is collected
      internally until make knows the target is completely specified.  Only when
@@ -434,8 +438,7 @@ lookup_special_var (struct variable *var)
                 p = &var->value[off];
               }
 
-            memcpy (p, v->name, l);
-            p += l;
+            p = mempcpy (p, v->name, l);
             *(p++) = ' ';
           }
       *(p-1) = '\0';
@@ -1018,26 +1021,40 @@ should_export (const struct variable *v)
 
 /* Create a new environment for FILE's commands.
    If FILE is nil, this is for the 'shell' function.
-   The child's MAKELEVEL variable is incremented.  */
+   The child's MAKELEVEL variable is incremented.
+   If recursive is true then we're running a recursive make, else not.  */
 
 char **
-target_environment (struct file *file)
+target_environment (struct file *file, int recursive)
 {
   struct variable_set_list *set_list;
   struct variable_set_list *s;
   struct hash_table table;
   struct variable **v_slot;
   struct variable **v_end;
-  struct variable makelevel_key;
   char **result_0;
   char **result;
+  const char *invalid = NULL;
   /* If we got no value from the environment then never add the default.  */
   int added_SHELL = shell_var.value == 0;
+  int found_makelevel = 0;
+  int found_mflags = 0;
+  int found_makeflags = 0;
 
-  if (file == 0)
-    set_list = current_variable_set_list;
-  else
+  /* If file is NULL we're creating the target environment for $(shell ...)
+     Remember this so we can just ignore recursion.  */
+  if (!file)
+    ++env_recursion;
+
+  /* We need to update makeflags if (a) we're not recurive, (b) jobserver_auth
+     is enabled, and (c) we need to add invalidation.  */
+  if (!recursive && jobserver_auth)
+    invalid = jobserver_get_invalid_auth ();
+
+  if (file)
     set_list = file->variables;
+  else
+    set_list = current_variable_set_list;
 
   hash_init (&table, VARIABLE_BUCKETS,
              variable_hash_1, variable_hash_2, variable_hash_cmp);
@@ -1067,16 +1084,10 @@ target_environment (struct file *file)
                   hash_insert_at (&table, v, evslot);
               }
             else if ((*evslot)->export == v_default)
-              {
-                /* We already have a variable but we don't know its status.  */
-                (*evslot)->export = v->export;
-              }
+              /* We already have a variable but we don't know its status.  */
+              (*evslot)->export = v->export;
           }
     }
-
-  makelevel_key.name = (char *)MAKELEVEL_NAME;
-  makelevel_key.length = MAKELEVEL_LENGTH;
-  hash_delete (&table, &makelevel_key);
 
   result = result_0 = xmalloc ((table.ht_fill + 3) * sizeof (char *));
 
@@ -1086,56 +1097,125 @@ target_environment (struct file *file)
     if (! HASH_VACANT (*v_slot))
       {
         struct variable *v = *v_slot;
+        char *value = v->value;
+        char *cp = NULL;
 
         /* This might be here because it was a target-specific variable that
            we didn't know the status of when we added it.  */
         if (! should_export (v))
           continue;
 
-        /* If this is the SHELL variable remember we already added it.  */
-        if (!added_SHELL && streq (v->name, "SHELL"))
-          added_SHELL = 1;
-
         /* If V is recursively expanded and didn't come from the environment,
            expand its value.  If it came from the environment, it should
            go back into the environment unchanged.  */
-        if (v->recursive
-            && v->origin != o_env && v->origin != o_env_override)
+        if (v->recursive && v->origin != o_env && v->origin != o_env_override)
+          value = cp = recursively_expand_for_file (v, file);
+
+        /* If this is the SHELL variable remember we already added it.  */
+        if (!added_SHELL && streq (v->name, "SHELL"))
           {
-            char *value = recursively_expand_for_file (v, file);
-#ifdef WINDOWS32
-            if (strcmp (v->name, "Path") == 0 ||
-                strcmp (v->name, "PATH") == 0)
-              convert_Path_to_windows32 (value, ';');
-#endif
-            *result++ = xstrdup (concat (3, v->name, "=", value));
-            free (value);
+            added_SHELL = 1;
+            goto setit;
           }
-        else
+
+        /* If this is MAKELEVEL, update it.  */
+        if (!found_makelevel && streq (v->name, MAKELEVEL_NAME))
           {
-#ifdef WINDOWS32
-            if (strcmp (v->name, "Path") == 0 ||
-                strcmp (v->name, "PATH") == 0)
-              convert_Path_to_windows32 (v->value, ';');
-#endif
-            *result++ = xstrdup (concat (3, v->name, "=", v->value));
+            char val[INTSTR_LENGTH + 1];
+            sprintf (val, "%u", makelevel + 1);
+            free (cp);
+            value = cp = xstrdup (val);
+            found_makelevel = 1;
+            goto setit;
           }
+
+        /* If we need to reset jobserver, check for MAKEFLAGS / MFLAGS.  */
+        if (invalid)
+          {
+            if (!found_makeflags && streq (v->name, MAKEFLAGS_NAME))
+              {
+                char *mf;
+                char *vars;
+                found_makeflags = 1;
+
+                if (!strstr (value, " --" JOBSERVER_AUTH_OPT "="))
+                  goto setit;
+
+                /* The invalid option must come before variable overrides.  */
+                vars = strstr (value, " -- ");
+                if (!vars)
+                  mf = xstrdup (concat (2, value, invalid));
+                else
+                  {
+                    size_t lf = vars - value;
+                    size_t li = strlen (invalid);
+                    mf = xmalloc (strlen (value) + li + 1);
+                    strcpy (mempcpy (mempcpy (mf, value, lf), invalid, li),
+                            vars);
+                  }
+                free (cp);
+                value = cp = mf;
+                if (found_mflags)
+                  invalid = NULL;
+                goto setit;
+              }
+
+            if (!found_mflags && streq (v->name, "MFLAGS"))
+              {
+                const char *mf;
+                found_mflags = 1;
+
+                if (!strstr (value, " --" JOBSERVER_AUTH_OPT "="))
+                  goto setit;
+
+                if (v->origin != o_env)
+                  goto setit;
+                mf = concat (2, value, invalid);
+                free (cp);
+                value = cp = xstrdup (mf);
+                if (found_makeflags)
+                  invalid = NULL;
+                goto setit;
+              }
+          }
+
+#ifdef WINDOWS32
+        if (streq (v->name, "Path") || streq (v->name, "PATH"))
+          {
+            if (!cp)
+              cp = xstrdup (value);
+            value = convert_Path_to_windows32 (cp, ';');
+            goto setit;
+          }
+#endif
+
+      setit:
+        *result++ = xstrdup (concat (3, v->name, "=", value));
+        free (cp);
       }
 
   if (!added_SHELL)
     *result++ = xstrdup (concat (3, shell_var.name, "=", shell_var.value));
 
-  *result = xmalloc (100);
-  sprintf (*result, "%s=%u", MAKELEVEL_NAME, makelevel + 1);
-  *++result = 0;
+  if (!found_makelevel)
+    {
+      char val[MAKELEVEL_LENGTH + 1 + INTSTR_LENGTH + 1];
+      sprintf (val, "%s=%u", MAKELEVEL_NAME, makelevel + 1);
+      *result++ = xstrdup (val);
+    }
+
+  *result = NULL;
 
   hash_free (&table, 0);
+
+  if (!file)
+    --env_recursion;
 
   return result_0;
 }
 
 static struct variable *
-set_special_var (struct variable *var)
+set_special_var (struct variable *var, enum variable_origin origin)
 {
   if (streq (var->name, RECIPEPREFIX_NAME))
     {
@@ -1146,8 +1226,8 @@ set_special_var (struct variable *var)
     }
   else if (streq (var->name, MAKEFLAGS_NAME))
     {
-      reset_switches ();
-      decode_env_switches (STRING_SIZE_TUPLE(MAKEFLAGS_NAME));
+      decode_env_switches (STRING_SIZE_TUPLE(MAKEFLAGS_NAME), origin);
+      define_makeflags (rebuilding_makefiles);
     }
 
   return var;
@@ -1184,7 +1264,7 @@ do_variable_definition (const floc *flocp, const char *varname,
                         const char *value, enum variable_origin origin,
                         enum variable_flavor flavor, int target_var)
 {
-  const char *p;
+  const char *newval;
   char *alloc_value = NULL;
   struct variable *v;
   int append = 0;
@@ -1199,7 +1279,7 @@ do_variable_definition (const floc *flocp, const char *varname,
          We have to allocate memory since otherwise it'll clobber the
          variable buffer, and we may still need that if we're looking at a
          target-specific variable.  */
-      p = alloc_value = allocated_variable_expand (value);
+      newval = alloc_value = allocated_variable_expand (value);
       break;
     case f_expand:
       {
@@ -1208,16 +1288,16 @@ do_variable_definition (const floc *flocp, const char *varname,
            tokens to '$$' to resolve to '$' when recursively expanded.  */
         char *t = allocated_variable_expand (value);
         char *np = alloc_value = xmalloc (strlen (t) * 2 + 1);
-        p = t;
-        while (p[0] != '\0')
+        char *op = t;
+        while (op[0] != '\0')
           {
-            if (p[0] == '$')
+            if (op[0] == '$')
               *(np++) = '$';
-            *(np++) = *(p++);
+            *(np++) = *(op++);
           }
         *np = '\0';
-        p = alloc_value;
         free (t);
+        newval = alloc_value;
         break;
       }
     case f_shell:
@@ -1225,9 +1305,10 @@ do_variable_definition (const floc *flocp, const char *varname,
         /* A shell definition "var != value".  Expand value, pass it to
            the shell, and store the result in recursively-expanded var. */
         char *q = allocated_variable_expand (value);
-        p = alloc_value = shell_result (q);
+        alloc_value = shell_result (q);
         free (q);
         flavor = f_recursive;
+        newval = alloc_value;
         break;
       }
     case f_conditional:
@@ -1243,7 +1324,7 @@ do_variable_definition (const floc *flocp, const char *varname,
     case f_recursive:
       /* A recursive variable definition "var = value".
          The value is used verbatim.  */
-      p = value;
+      newval = value;
       break;
     case f_append:
     case f_append_value:
@@ -1268,15 +1349,16 @@ do_variable_definition (const floc *flocp, const char *varname,
           {
             /* There was no old value.
                This becomes a normal recursive definition.  */
-            p = value;
+            newval = value;
             flavor = f_recursive;
           }
         else
           {
             /* Paste the old and new values together in VALUE.  */
 
-            size_t oldlen, vallen;
+            size_t oldlen, vallen, alloclen;
             const char *val;
+            char *cp;
             char *tp = NULL;
 
             val = value;
@@ -1301,18 +1383,25 @@ do_variable_definition (const floc *flocp, const char *varname,
               }
 
             oldlen = strlen (v->value);
-            p = alloc_value = xmalloc (oldlen + 1 + vallen + 1);
+            alloclen = oldlen + 1 + vallen + 1;
+            cp = alloc_value = xmalloc (alloclen);
 
             if (oldlen)
               {
-                memcpy (alloc_value, v->value, oldlen);
-                alloc_value[oldlen] = ' ';
-                ++oldlen;
+                char *s;
+                if (streq (varname, MAKEFLAGS_NAME)
+                    && (s = strstr (v->value, " -- ")))
+                  /* We found a separator in MAKEFLAGS.  Ignore variable
+                     assignments: set_special_var() will reconstruct things.  */
+                  cp = mempcpy (cp, v->value, s - v->value);
+                else
+                  cp = mempcpy (cp, v->value, oldlen);
+                *(cp++) = ' ';
               }
 
-            memcpy (&alloc_value[oldlen], val, vallen + 1);
-
+            memcpy (cp, val, vallen + 1);
             free (tp);
+            newval = alloc_value;
           }
       }
       break;
@@ -1321,6 +1410,8 @@ do_variable_definition (const floc *flocp, const char *varname,
       /* Should not be possible.  */
       abort ();
     }
+
+  assert (newval);
 
 #ifdef __MSDOS__
   /* Many Unix Makefiles include a line saying "SHELL=/bin/sh", but
@@ -1363,16 +1454,16 @@ do_variable_definition (const floc *flocp, const char *varname,
           char *fake_env[2];
           size_t pathlen = 0;
 
-          shellbase = strrchr (p, '/');
-          bslash = strrchr (p, '\\');
+          shellbase = strrchr (newval, '/');
+          bslash = strrchr (newval, '\\');
           if (!shellbase || bslash > shellbase)
             shellbase = bslash;
-          if (!shellbase && p[1] == ':')
-            shellbase = p + 1;
+          if (!shellbase && newval[1] == ':')
+            shellbase = newval + 1;
           if (shellbase)
             shellbase++;
           else
-            shellbase = p;
+            shellbase = newval;
 
           /* Search for the basename of the shell (with standard
              executable extensions) along the $PATH.  */
@@ -1413,7 +1504,7 @@ do_variable_definition (const floc *flocp, const char *varname,
          set no_default_sh_exe to indicate sh was found and
          set new value for SHELL variable.  */
 
-      if (find_and_set_default_shell (p))
+      if (find_and_set_default_shell (newval))
         {
           v = define_variable_in_set (varname, strlen (varname), default_shell,
                                       origin, flavor == f_recursive,
@@ -1427,11 +1518,11 @@ do_variable_definition (const floc *flocp, const char *varname,
         {
           char *tp = alloc_value;
 
-          alloc_value = allocated_variable_expand (p);
+          alloc_value = allocated_variable_expand (newval);
 
           if (find_and_set_default_shell (alloc_value))
             {
-              v = define_variable_in_set (varname, strlen (varname), p,
+              v = define_variable_in_set (varname, strlen (varname), newval,
                                           origin, flavor == f_recursive,
                                           (target_var
                                            ? current_variable_set_list->set
@@ -1459,7 +1550,7 @@ do_variable_definition (const floc *flocp, const char *varname,
      invoked in places where we want to define globally visible variables,
      make sure we define this variable in the global set.  */
 
-  v = define_variable_in_set (varname, strlen (varname), p, origin,
+  v = define_variable_in_set (varname, strlen (varname), newval, origin,
                               flavor == f_recursive || flavor == f_expand,
                               (target_var
                                ? current_variable_set_list->set : NULL),
@@ -1469,7 +1560,7 @@ do_variable_definition (const floc *flocp, const char *varname,
 
  done:
   free (alloc_value);
-  return v->special ? set_special_var (v) : v;
+  return v->special ? set_special_var (v, origin) : v;
 }
 
 /* Parse P (a null-terminated string) as a variable definition.
@@ -1850,7 +1941,7 @@ print_target_variables (const struct file *file)
       size_t l = strlen (file->name);
       char *t = alloca (l + 3);
 
-      strcpy (t, file->name);
+      memcpy (t, file->name, l);
       t[l] = ':';
       t[l+1] = ' ';
       t[l+2] = '\0';
@@ -1861,21 +1952,20 @@ print_target_variables (const struct file *file)
 
 #ifdef WINDOWS32
 void
-sync_Path_environment (void)
+sync_Path_environment ()
 {
-  char *path = allocated_variable_expand ("$(PATH)");
   static char *environ_path = NULL;
+  char *oldpath = environ_path;
+  char *path = allocated_variable_expand ("PATH=$(PATH)");
 
   if (!path)
     return;
 
-  /* If done this before, free the previous entry before allocating new one.  */
-  free (environ_path);
-
-  /* Create something WINDOWS32 world can grok.  */
+  /* Convert PATH into something WINDOWS32 world can grok.  */
   convert_Path_to_windows32 (path, ';');
-  environ_path = xstrdup (concat (3, "PATH", "=", path));
+
+  environ_path = path;
   putenv (environ_path);
-  free (path);
+  free (oldpath);
 }
 #endif
