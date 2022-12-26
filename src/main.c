@@ -791,13 +791,13 @@ debug_signal_handler (int sig UNUSED)
   db_level = db_level ? DB_NONE : DB_BASIC;
 }
 
-static RETSIGTYPE
+static void
 decrease_job_signal_handler (int sig UNUSED)
 {
   num_jobs_adjustment--;
 }
 
-static RETSIGTYPE
+static void
 increase_job_signal_handler (int sig UNUSED)
 {
   bsd_signal (SIGUSR1, decrease_job_signal_handler);
@@ -807,7 +807,7 @@ increase_job_signal_handler (int sig UNUSED)
 
 void increase_jobs(void)
 {
-  if (( ! master_job_slots ) && jobserver_setup ( 0 ))
+  if (( ! master_job_slots ) && jobserver_setup ( 0, jobserver_style ))
     {
       /* make was initially started without -j, needed to start job server */
       /* Fill in the jobserver_auth for our children.  */
