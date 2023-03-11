@@ -3769,7 +3769,7 @@ print_version (void)
     /* Do it only once.  */
     return;
 
-  printf ("%sHenriks Make %s (built on GNU Make)\n", precede, version_string);
+  printf ("%sHenriks Make %sh (built on GNU Make)\n", precede, version_string);
 
   if (!remote_description || *remote_description == '\0')
     printf (_("%sBuilt for %s\n"), precede, make_host);
