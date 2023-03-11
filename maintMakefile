@@ -1,5 +1,5 @@
 # Maintainer-only makefile segment.  This contains things that are relevant
-# only if you have the full copy of the GNU make sources from the Git
+# only if you have the full copy of the GNU Make sources from the Git
 # tree, not a dist copy.
 
 # --------------------- #
@@ -20,7 +20,7 @@ SRCROOTDIR ?= $(HOME)/src
 # Where to put the CVS checkout of the GNU web repository
 GNUWEBDIR ?= $(SRCROOTDIR)/gnu-www
 
-# Where to put the CVS checkout of the GNU make web repository
+# Where to put the CVS checkout of the GNU Make web repository
 MAKEWEBDIR ?= $(SRCROOTDIR)/make/make-web
 
 # Enable Perl warnings for the test suite
@@ -238,16 +238,26 @@ export TAR_OPTIONS := --mode=u+w,go-w --owner=0 --group=0 --numeric-owner --sort
 # but add a new check to be sure it doesn't happen again.
 mk_dist_files = AUTHORS ChangeLog COPYING INSTALL README src/mkconfig.h
 
-dist: mk-distcheck
+dist: mk-dist mk-distcheck
 
 .PHONY: mk-distcheck
 mk-distcheck: distdir
 	@echo "Checking for extra installed files..."
-	for fn in $(mk_dist_files); do \
+	@for fn in $(mk_dist_files); do \
 	    test -f '$(distdir)'/"$$fn" \
 		|| { echo "Missing dist file: $$fn"; exit 1; }; \
 	done; true
 
+# Make sure that the files in lib/ have been updated from the files in gl/lib/
+
+GL_LIB_FILES := $(wildcard gl/lib/*)
+
+mk-dist:
+	@echo "Checking gl/lib files..."
+	@for fn in $(GL_LIB_FILES); do \
+	    cmp $$fn $${fn##gl/} \
+		|| { echo "Run ./bootstrap --gen ?"; exit 1; }; \
+	done; true
 
 # ---------------------------------- #
 # Alternative configuration checks.  #
@@ -264,6 +274,7 @@ CFGCHECK_MAKEFLAGS   = # CFLAGS='$(AM_CFLAGS)'
 checkcfg.strict-c90:  CFGCHECK_CONFIGFLAGS = CFLAGS='-std=c90 -pedantic'
 checkcfg.strict-c90:  CFGCHECK_MAKEFLAGS   =
 
+checkcfg.job-pipe:    CFGCHECK_CONFIGFLAGS = CPPFLAGS=-DJOBSERVER_USE_FIFO=0
 checkcfg.no-jobserver:CFGCHECK_CONFIGFLAGS = --disable-job-server
 checkcfg.no-load:     CFGCHECK_CONFIGFLAGS = --disable-load
 checkcfg.no-guile:    CFGCHECK_CONFIGFLAGS = --without-guile
@@ -279,6 +290,7 @@ checkcfg.no-archives: CFGCHECK_CONFIGFLAGS = CPPFLAGS=-DNO_ARCHIVES
 
 CONFIG_CHECKS := \
 	checkcfg.strict-c90 \
+	checkcfg.job-pipe \
 	checkcfg.no-jobserver \
 	checkcfg.no-load \
 	checkcfg.no-guile \
@@ -290,8 +302,9 @@ CONFIG_CHECKS := \
 
 .PHONY: check-alt-config
 check-alt-config: $(CONFIG_CHECKS)
+	@echo --- $@ SUCCESS
 
-# Trick GNU make so it doesn't run the submake as a recursive make.
+# Trick GNU Make so it doesn't run the submake as a recursive make.
 NR_MAKE = $(MAKE)
 
 # Check builds both with build.sh and with make
@@ -342,7 +355,7 @@ checkcfg.basicmk: checkcfg.% : distdir
 	&& cd $(distdir) \
 	&& ./configure \
 	       $(AM_DISTCHECK_CONFIGURE_FLAGS) $(DISTCHECK_CONFIGURE_FLAGS) \
-	&& $(NR_MAKE) $(AM_MAKEFLAGS) -f Basic.mk $(CFGCHECK_MAKEFLAGS)' \
+	&& $(NR_MAKE) $(AM_MAKEFLAGS) -f Basic.mk '$(CFGCHECK_MAKEFLAGS)' \
 	&& ./make $(AM_MAKEFLAGS) -f Basic.mk check \
 	&& ./make $(AM_MAKEFLAGS) -f Basic.mk clean
 
@@ -393,7 +406,7 @@ makeweb-repo = $(USER)@cvs.sv.gnu.org:/web/make
 gnuweb-repo = :pserver:anonymous@cvs.sv.gnu.org:/web/www
 gnuweb-dir = www/server/standards
 
-# Get the GNU make web page boilerplate etc.
+# Get the GNU Make web page boilerplate etc.
 update-makeweb:
 	test -d '$(MAKEWEBDIR)' || mkdir -p '$(MAKEWEBDIR)'
 	test -d '$(MAKEWEBDIR)'/CVS \
@@ -493,48 +506,18 @@ tag-release:
 # Sign it with my key.  If you don't have my key/passphrase then sorry,
 # you're SOL! :)
 
-GPG = gpg
-GPGFLAGS = -u $(GPG_KEYID)
-
-DIST_ARCHIVES_SIG = $(addsuffix .sig,$(DIST_ARCHIVES))
-DIST_ARCHIVES_DIRECTIVE = $(addsuffix .directive.asc,$(DIST_ARCHIVES))
-
-# A simple rule to test signing, etc.
-.PHONY: distsign
-distsign: $(DIST_ARCHIVES_SIG) $(DIST_ARCHIVES_DIRECTIVE)
-
-%.sig : %
-	@echo "Signing file '$<':"
-	$(GPG) $(GPGFLAGS) -o "$@" -b "$<"
-
-%.directive.asc: %
-	@echo "Creating signed directive file '$@':"
-	@( \
-	   echo 'version: 1.2'; \
-	   echo 'directory: make'; \
-	   echo 'filename: $*'; \
-	   echo 'comment: Official upload of $(PACKAGE_NAME) version $(PACKAGE_VERSION)'; \
-	 ) > "$*.directive"
-	$(GPG) $(GPGFLAGS) -o "$@" --clearsign "$*.directive"
-	@rm -f "$*.directive"
-
-# Upload the artifacts
-
-FTPPUT := $(firstword $(shell command -v ncftpput) $(wildcard $(GNULIBDIR)/build-aux/ncftpput-ftp) invalid)
-gnu-upload-host = ftp-upload.gnu.org
-gnu-upload-dir  = /incoming
-
+GNUPLOAD := $(GNULIBDIR)/build-aux/gnupload
 
 UPLOADS = upload-alpha upload-ftp
 .PHONY: $(UPLOADS)
-$(UPLOADS): $(DIST_ARCHIVES) $(DIST_ARCHIVES_SIG) $(DIST_ARCHIVES_DIRECTIVE)
-	$(FTPPUT) "$(gnu-upload-host)" "$(gnu-upload-dir)/$(@:upload-%=%)" $^
+$(UPLOADS): upload-%: $(DIST_ARCHIVES)
+	$(GNUPLOAD) --user "$(GPG_KEYID)" --to "$*.gnu.org:make" -- $^
 
 
-# Rebuild Makefile.in if this file is modifed.
+# Rebuild Makefile.in if this file is modified.
 Makefile.in: maintMakefile
 
-# Copyright (C) 1997-2022 Free Software Foundation, Inc.
+# Copyright (C) 1997-2023 Free Software Foundation, Inc.
 # This file is part of GNU Make.
 #
 # GNU Make is free software; you can redistribute it and/or modify it under

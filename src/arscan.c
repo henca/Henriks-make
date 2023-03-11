@@ -1,5 +1,5 @@
 /* Library function for scanning an archive file.
-Copyright (C) 1987-2022 Free Software Foundation, Inc.
+Copyright (C) 1987-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -331,7 +331,7 @@ ar_scan (const char *archive, ar_member_func_t function, const void *varg)
 #endif
 
 #ifndef WINDOWS32
-# if !defined (__ANDROID__) && !defined (__BEOS__)
+# if !defined (__ANDROID__) && !defined (__BEOS__) && !defined(MK_OS_ZOS)
 #  include <ar.h>
 # else
    /* These platforms don't have <ar.h> but have archives in the same format

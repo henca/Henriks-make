@@ -1,5 +1,5 @@
 /* Implicit rule searching for GNU Make.
-Copyright (C) 1988-2022 Free Software Foundation, Inc.
+Copyright (C) 1988-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -271,6 +271,8 @@ pattern_search (struct file *file, int archive,
   size_t pathlen;
 
   PATH_VAR (stem_str); /* @@ Need to get rid of stem, stemlen, etc. */
+
+  ++depth;
 
 #ifndef NO_ARCHIVES
   if (archive || ar_name (filename))
@@ -893,7 +895,7 @@ pattern_search (struct file *file, int archive,
 
                       if (pattern_search (int_file,
                                           0,
-                                          depth + 1,
+                                          depth,
                                           recursions + 1,
                                           allow_compat_rules))
                         {
@@ -1138,6 +1140,8 @@ pattern_search (struct file *file, int archive,
  done:
   free (tryrules);
   free (deplist);
+
+  --depth;
 
   if (rule)
     {

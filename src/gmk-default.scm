@@ -1,5 +1,5 @@
-;; Contents of the (gnu make) Guile module
-;; Copyright (C) 2011-2022 Free Software Foundation, Inc.
+;; Contents of the (GNU Make) Guile module
+;; Copyright (C) 2011-2023 Free Software Foundation, Inc.
 ;; This file is part of GNU Make.
 ;;
 ;; GNU Make is free software; you can redistribute it and/or modify it under
@@ -17,7 +17,7 @@
 
 (define (to-string-maybe x)
   (cond
-   ;; In GNU make, "false" is the empty string
+   ;; In GNU Make, "false" is the empty string
    ((or (not x)
         (unspecified? x)
         (variable? x)
@@ -45,7 +45,7 @@
     (walk x)
     (string-join (reverse! acc))))
 
-;; Return the value of the GNU make variable V
+;; Return the value of the GNU Make variable V
 (define (gmk-var v)
   (gmk-expand (format #f "$(~a)" (obj-to-str v))))
 

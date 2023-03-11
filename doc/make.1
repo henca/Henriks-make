@@ -1,6 +1,6 @@
-.TH MAKE 1 "31 May 2022" "GNU" "User Commands"
+.TH MAKE 1 "26 May 2023" "GNU" "User Commands"
 .SH NAME
-make \- GNU make utility to maintain groups of programs
+make \- GNU Make utility to maintain groups of programs
 .SH SYNOPSIS
 .B make
 [\fIOPTION\fR]... [\fITARGET\fR]...
@@ -76,9 +76,8 @@ listing, right near other important files such as
 The first name checked,
 .IR GNUmakefile ,
 is not recommended for most makefiles.  You should use this name if you have a
-makefile that is specific to GNU
-.BR make ,
-and will not be understood by other versions of
+makefile that is specific to GNU Make, and will not be understood by other
+versions of
 .BR make .
 If
 .I makefile
@@ -368,9 +367,7 @@ except that the modification time is changed only in the imagination of
 .B \-\-warn\-undefined\-variables
 Warn when an undefined variable is referenced.
 .SH "EXIT STATUS"
-GNU
-.B make
-exits with a status of zero if all makefiles were successfully parsed
+GNU Make exits with a status of zero if all makefiles were successfully parsed
 and no targets that were built failed.  A status of one will be returned
 if the
 .B \-q
@@ -398,9 +395,9 @@ This manual page contributed by Dennis Morse of Stanford University.
 Further updates contributed by Mike Frysinger.  It has been reworked by Roland
 McGrath.  Maintained by Paul Smith.
 .SH "COPYRIGHT"
-Copyright \(co 1992-1993, 1996-2022 Free Software Foundation, Inc.
+Copyright \(co 1992-1993, 1996-2023 Free Software Foundation, Inc.
 This file is part of
-.IR "GNU make" .
+.IR "GNU Make" .
 .LP
 GNU Make is free software; you can redistribute it and/or modify it under the
 terms of the GNU General Public License as published by the Free Software

@@ -1,5 +1,5 @@
-/* Output to stdout / stderr for GNU make
-Copyright (C) 2013-2022 Free Software Foundation, Inc.
+/* Output to stdout / stderr for GNU Make
+Copyright (C) 2013-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -18,7 +18,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "os.h"
 #include "output.h"
 
-/* GNU make no longer supports pre-ANSI89 environments.  */
+/* GNU Make no longer supports pre-ANSI89 environments.  */
 
 #include <assert.h>
 #include <stdio.h>

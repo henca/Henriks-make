@@ -1,5 +1,5 @@
 /* Miscellaneous global declarations and portability cruft for GNU Make.
-Copyright (C) 1988-2022 Free Software Foundation, Inc.
+Copyright (C) 1988-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -18,28 +18,6 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
    using -I. -I$srcdir will use ./config.h rather than $srcdir/config.h
    (which it would do because makeint.h was found in $srcdir).  */
 #include <config.h>
-#undef  HAVE_CONFIG_H
-#define HAVE_CONFIG_H 1
-
-/* Specify we want GNU source code.  This must be defined before any
-   system headers are included.  */
-
-#define _GNU_SOURCE 1
-
-/* AIX requires this to be the first thing in the file.  */
-#if HAVE_ALLOCA_H
-# include <alloca.h>
-#else
-# ifdef _AIX
- #pragma alloca
-# else
-#  if !defined(__GNUC__) && !defined(WINDOWS32)
-#   ifndef alloca /* predefined by HP cc +Olibcalls */
-char *alloca ();
-#   endif
-#  endif
-# endif
-#endif
 
 /* Some versions of GCC (e.g., 10.x) set the warn_unused_result attribute on
    __builtin_alloca.  This causes alloca(0) to fail and is not easily worked
@@ -82,7 +60,6 @@ char *alloca ();
 # define __NO_STRING_INLINES
 #endif
 
-#include <stddef.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <signal.h>
@@ -103,6 +80,17 @@ char *alloca ();
 
 #ifndef errno
 extern int errno;
+#endif
+
+/* Define macros specifying which OS we are building for.  */
+#if __gnu_hurd__
+# define MK_OS_HURD 1
+#endif
+#if __CYGWIN__
+# define MK_OS_CYGWIN 1
+#endif
+#if defined(__MVS__)
+# define MK_OS_ZOS 1
 #endif
 
 #ifdef __VMS
@@ -251,8 +239,6 @@ extern int vms_unix_simulation;
 # ifdef HAVE_STRING_H
 #  include <string.h>
 #  define ANSI_STRING 1
-# else
-#  include <strings.h>
 # endif
 # ifdef HAVE_MEMORY_H
 #  include <memory.h>
@@ -294,6 +280,10 @@ char *strerror (int errnum);
 #endif
 #if HAVE_STDINT_H
 # include <stdint.h>
+#endif
+
+#if HAVE_STRINGS_H
+# include <strings.h>  /* Needed for strcasecmp / strncasecmp.  */
 #endif
 
 #if defined _MSC_VER || defined __MINGW32__
@@ -406,7 +396,9 @@ extern int unixy_shell;
 # endif
 
 /* Include only the minimal stuff from windows.h.   */
-# define WIN32_LEAN_AND_MEAN
+# ifndef WIN32_LEAN_AND_MEAN
+#  define WIN32_LEAN_AND_MEAN
+# endif
 #endif  /* WINDOWS32 */
 
 /* ALL_SET() evaluates the second argument twice.  */
@@ -710,9 +702,6 @@ char *getwd (void);
 #  define strcasecmp stricmp
 # elif HAVE_STRCMPI
 #  define strcasecmp strcmpi
-# else
-/* Create our own, in misc.c */
-int strcasecmp (const char *s1, const char *s2);
 # endif
 #endif
 
@@ -721,20 +710,7 @@ int strcasecmp (const char *s1, const char *s2);
 #  define strncasecmp strnicmp
 # elif HAVE_STRNCMPI
 #  define strncasecmp strncmpi
-# else
-/* Create our own, in misc.c */
-int strncasecmp (const char *s1, const char *s2, size_t n);
 # endif
-#endif
-
-#if !HAVE_MEMPCPY
-/* Create our own, in misc.c */
-void *mempcpy (void *dest, const void *src, size_t n);
-#endif
-
-#if !HAVE_STPCPY
-/* Create our own, in misc.c */
-char *stpcpy (char *dest, const char *src);
 #endif
 
 #define OUTPUT_SYNC_NONE    0
@@ -773,6 +749,14 @@ extern int batch_mode_shell;
 extern char cmd_prefix;
 
 extern unsigned int no_intermediates;
+
+#if HAVE_MKFIFO
+/* It seems that mkfifo() is not working correctly, or at least not the way
+   GNU make wants it to work, on GNU/Hurd and Cygwin so don't use it there.  */
+# if !defined(JOBSERVER_USE_FIFO) && !MK_OS_HURD && !MK_OS_CYGWIN
+#  define JOBSERVER_USE_FIFO 1
+# endif
+#endif
 
 #define JOBSERVER_AUTH_OPT      "jobserver-auth"
 

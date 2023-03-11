@@ -5,7 +5,7 @@
 # Written 91-12-02 through 92-01-01 by Stephen McGee.
 # Modified 92-02-11 through 92-02-22 by Chris Arthur to further generalize.
 #
-# Copyright (C) 1991-2022 Free Software Foundation, Inc.
+# Copyright (C) 1991-2023 Free Software Foundation, Inc.
 # This file is part of GNU Make.
 #
 # GNU Make is free software; you can redistribute it and/or modify it under
@@ -148,7 +148,7 @@ sub resetENV
   # through Perl 5.004.  It was fixed in Perl 5.004_01, but we don't
   # want to require that here, so just delete each one individually.
 
-  if ($^O ne 'VMS') {
+  if ($osname ne 'VMS') {
     foreach $v (keys %ENV) {
       delete $ENV{$v};
     }
@@ -205,6 +205,9 @@ sub toplevel
            'PURIFYOPTIONS',
            # Windows-specific things
            'Path', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'PATHEXT',
+           # z/OS specific things
+           'LIBPATH', '_BPXK_AUTOCVT',
+           '_TAG_REDIR_IN',  '_TAG_REDIR_OUT',
            # DJGPP-specific things
            'DJDIR', 'DJGPP', 'SHELL', 'COMSPEC', 'HOSTNAME', 'LFN',
            'FNCASE', '387', 'EMU387', 'GROUP'
@@ -410,15 +413,13 @@ sub get_osname
   elsif ($osname =~ m%OS/2%) {
     $port_type = 'OS/2';
   }
-
   # VMS has a GNV Unix mode or a DCL mode.
   # The SHELL environment variable should not be defined in VMS-DCL mode.
   elsif ($osname eq 'VMS' && !defined $ENV{"SHELL"}) {
     $port_type = 'VMS-DCL';
   }
   # Everything else, right now, is UNIX.  Note that we should integrate
-  # the VOS support into this as well and get rid of $vos; we'll do
-  # that next time.
+  # the VOS support into this as well and get rid of $vos
   else {
     $port_type = 'UNIX';
   }
@@ -432,7 +433,7 @@ sub get_osname
   # See if the filesystem supports long file names with multiple
   # dots.  DOS doesn't.
   $short_filenames = 0;
-  (open (TOUCHFD, "> fancy.file.name") and close (TOUCHFD))
+  (open (TOUCHFD, '>', 'fancy.file.name') and close (TOUCHFD))
       or $short_filenames = 1;
   unlink ("fancy.file.name") or $short_filenames = 1;
 
@@ -615,7 +616,7 @@ sub run_all_tests
     $perl_testname = "$scriptpath$pathsep$testname";
     $testname =~ s/(\.pl|\.perl)$//;
     $testpath = "$workpath$pathsep$testname";
-    $extext = '_' if $^O eq 'VMS';
+    $extext = '_' if $osname eq 'VMS';
     $log_filename = "$testpath.$logext";
     $diff_filename = "$testpath.$diffext";
     $base_filename = "$testpath.$baseext";
@@ -836,7 +837,7 @@ sub compare_answer_vms
   return 1 if ($log eq $kgo);
 
   # VMS wants target device to exist or generates an error,
-  # Some test tagets look like VMS devices and trip this.
+  # Some test targets look like VMS devices and trip this.
   $log =~ s/^.+\: no such device or address.*$//gim;
   $log =~ s/\n\n/\n/gm;
   $log =~ s/^\n+//gm;
@@ -906,6 +907,21 @@ sub compare_answer_vms
   return 0;
 }
 
+sub convert_answer_zos
+{
+  my ($log) = @_;
+
+  # z/OS emits "Error 143" or "SIGTERM" instead of terminated
+  $log =~ s/Error 143/Terminated/gm;
+  $log =~ s/SIGTERM/Terminated/gm;
+
+  # z/OS error messages have a prefix
+  $log =~ s/EDC5129I No such file or directory\./No such file or directory/gm;
+  $log =~ s/FSUM7351 not found/not found/gm;
+
+  return $log;
+}
+
 sub compare_answer
 {
   my ($kgo, $log) = @_;
@@ -922,9 +938,15 @@ sub compare_answer
   $log =~ s,\r\n,\n,gs;
   return 1 if ($log eq $kgo);
 
-  # Keep these in case it's a regex
+  # Keep the originals in case it's a regex
   $mkgo = $kgo;
   $mlog = $log;
+
+  # z/OS has quirky outputs
+  if ($osname eq 'os390') {
+    $mlog = convert_answer_zos($mlog);
+    return 1 if ($mlog eq $kgo);
+  }
 
   # Some versions of Perl on Windows use /c instead of C:
   $mkgo =~ s,\b([A-Z]):,/\L$1,g;
@@ -937,7 +959,7 @@ sub compare_answer
   return 1 if ($mlog eq $mkgo);
 
   # VMS is a whole thing...
-  return 1 if ($^O eq 'VMS' && compare_answer_vms($kgo, $log));
+  return 1 if ($osname eq 'VMS' && compare_answer_vms($kgo, $log));
 
   # See if the answer might be a regex.
   if ($kgo =~ m,^/(.+)/$,) {
@@ -1067,7 +1089,7 @@ sub detach_default_output
   @OUTSTACK or error("default output stack has flown under!\n", 1);
 
   close(STDOUT);
-  close(STDERR) unless $^O eq 'VMS';
+  close(STDERR) unless $osname eq 'VMS';
 
 
   open (STDOUT, '>&', pop @OUTSTACK) or error("ddo: $! duping STDOUT\n", 1);
@@ -1077,7 +1099,7 @@ sub detach_default_output
 sub _run_with_timeout
 {
   my $code;
-  if ($^O eq 'VMS') {
+  if ($osname eq 'VMS') {
     #local $SIG{ALRM} = sub {
     #    my $e = $ERRSTACK[0];
     #    print $e "\nTest timed out after $test_timeout seconds\n";
@@ -1173,7 +1195,7 @@ sub run_command
   print "\nrun_command: @_\n" if $debug;
   my $code = _run_command(@_);
   print "run_command returned $code.\n" if $debug;
-  print "vms status = ${^CHILD_ERROR_NATIVE}\n" if $debug and $^O eq 'VMS';
+  print "vms status = ${^CHILD_ERROR_NATIVE}\n" if $debug and $osname eq 'VMS';
   return $code;
 }
 
@@ -1195,7 +1217,7 @@ sub run_command_with_output
   $err and die $err;
 
   print "run_command_with_output returned $code.\n" if $debug;
-  print "vms status = ${^CHILD_ERROR_NATIVE}\n" if $debug and $^O eq 'VMS';
+  print "vms status = ${^CHILD_ERROR_NATIVE}\n" if $debug and $osname eq 'VMS';
   return $code;
 }
 
@@ -1243,7 +1265,7 @@ sub remove_directory_tree_inner
         return 0;
       }
     } else {
-      if ($^O ne 'VMS') {
+      if ($osname ne 'VMS') {
         if (!unlink $object) {
           print "Cannot unlink $object: $!\n";
           return 0;
@@ -1267,7 +1289,7 @@ sub remove_directory_tree_inner
 #
 #  foreach my $file (@filenames) {
 #    utime ($now, $now, $file)
-#          or (open (TOUCHFD, ">> $file") and close (TOUCHFD))
+#          or (open (TOUCHFD, '>>', $file) and close (TOUCHFD))
 #               or &error ("Couldn't touch $file: $!\n", 1);
 #  }
 #  return 1;
@@ -1314,7 +1336,7 @@ sub create_file
 {
   my ($filename, @lines) = @_;
 
-  open (CF, "> $filename") or &error ("Couldn't open $filename: $!\n", 1);
+  open (CF, '>', $filename) or &error ("Couldn't open '$filename': $!\n", 1);
   foreach $line (@lines) {
     print CF $line;
   }

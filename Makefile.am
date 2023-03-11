@@ -1,6 +1,6 @@
 # This is a -*-Makefile-*-, or close enough
 #
-# Copyright (C) 1997-2022 Free Software Foundation, Inc.
+# Copyright (C) 1997-2023 Free Software Foundation, Inc.
 # This file is part of GNU Make.
 #
 # GNU Make is free software; you can redistribute it and/or modify it under
@@ -34,8 +34,8 @@ make_SRCS =	src/ar.c src/arscan.c src/commands.c src/commands.h \
 		src/getopt.h src/getopt1.c src/gettext.h src/guile.c \
 		src/hash.c src/hash.h src/implicit.c src/job.c src/job.h \
 		src/load.c src/loadapi.c src/main.c src/makeint.h src/misc.c \
-		src/os.h src/output.c src/output.h src/read.c src/remake.c \
-		src/rule.c src/rule.h src/shuffle.h src/shuffle.c \
+		src/mkcustom.h src/os.h src/output.c src/output.h src/read.c \
+		src/remake.c src/rule.c src/rule.h src/shuffle.h src/shuffle.c \
 		src/signame.c src/strcache.c src/variable.c src/variable.h \
 		src/version.c src/vpath.c
 
@@ -112,7 +112,7 @@ test_FILES =	tests/run_make_tests tests/run_make_tests.bat \
 # test/scripts are added via dist-hook below.
 
 EXTRA_DIST =	ChangeLog INSTALL README build.sh build.cfg.in $(man_MANS) \
-		src/mkconfig.h README.customs README.OS2 \
+		src/mkconfig.h README.customs README.OS2 README.zOS \
 		README.Amiga SCOPTIONS src/config.ami \
 		README.DOS builddos.bat src/configh.dos \
 		README.W32 build_w32.bat src/config.h.W32 \
@@ -171,7 +171,8 @@ errorpre = makeerror-$(PACKAGE_VERSION)-$(host_triplet)
 testfiles = $(testlog) $(testresult) $(errorfile)
 MOSTLYCLEANFILES = $(testfiles)
 
-errordetails = config.status config.log src/config.h $(testlog) tests/work
+errordetails =	config.status config.log src/config.h src/mkconfig.h \
+		$(testlog) tests/work
 
 # Create a 4-letter random sequence
 rand_value = c = "abcdefghijklmnopqrstuvwxyz0123456789"

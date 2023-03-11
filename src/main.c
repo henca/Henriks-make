@@ -1,5 +1,5 @@
 /* Argument parsing and main program of GNU Make.
-Copyright (C) 1988-2022 Free Software Foundation, Inc.
+Copyright (C) 1988-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -34,9 +34,6 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #ifdef WINDOWS32
 # include <windows.h>
 # include <io.h>
-#ifdef HAVE_STRINGS_H
-# include <strings.h> /* for strcasecmp */
-#endif
 # include "pathstuff.h"
 # include "sub_proc.h"
 # include "w32err.h"
@@ -237,6 +234,7 @@ static const int inf_jobs = 0;
 char *jobserver_auth = NULL;
 
 /* Style for the jobserver.  */
+
 static char *jobserver_style = NULL;
 
 /* Shuffle mode for goals and prerequisites.  */
@@ -698,7 +696,7 @@ initialize_stopchar_map (void)
 
 /* This code is stolen from gnulib.
    If/when we abandon the requirement to work with K&R compilers, we can
-   remove this (and perhaps other parts of GNU make!) and migrate to using
+   remove this (and perhaps other parts of GNU Make!) and migrate to using
    gnulib directly.
 
    This is called only through atexit(), which means die() has already been
@@ -1213,7 +1211,11 @@ temp_stdin_unlink ()
     }
 }
 
-#ifdef _AMIGA
+#ifdef MK_OS_ZOS
+extern char **environ;
+#endif
+
+#if defined(_AMIGA) || defined(MK_OS_ZOS)
 int
 main (int argc, char **argv)
 #else
@@ -1497,7 +1499,7 @@ main (int argc, char **argv, char **envp)
 #endif
 #ifdef MAKE_JOBSERVER
                            " jobserver"
-# ifdef HAVE_MKFIFO
+# if JOBSERVER_USE_FIFO
                            " jobserver-fifo"
 # endif
 #endif
@@ -1530,6 +1532,10 @@ main (int argc, char **argv, char **envp)
   /* Read in variables from the environment.  It is important that this be
      done before $(MAKE) is figured out so its definitions will not be
      from the environment.  */
+
+#ifdef MK_OS_ZOS
+  char **envp = environ;
+#endif
 
 #ifndef _AMIGA
   {
@@ -1966,7 +1972,7 @@ main (int argc, char **argv, char **envp)
          allow the user's setting of MAKEOVERRIDES to affect MAKEFLAGS, so
          a reference to this hidden variable is written instead. */
       define_variable_cname ("MAKEOVERRIDES", "${-*-command-variables-*-}",
-                             o_env, 1);
+                             o_default, 1);
 #ifdef VMS
       vms_export_dcl_symbol ("MAKEOVERRIDES", "${-*-command-variables-*-}");
 #endif
@@ -2051,7 +2057,7 @@ main (int argc, char **argv, char **envp)
 # endif
   }
 
-#ifdef HAVE_PSELECT
+#if defined(HAVE_PSELECT) && !defined(MK_OS_ZOS)
   /* If we have pselect() then we need to block SIGCHLD so it's deferred.  */
   {
     sigset_t block;
@@ -2075,13 +2081,6 @@ main (int argc, char **argv, char **envp)
 
   /* Define the initial list of suffixes for old-style rules.  */
   set_default_suffixes ();
-
-  /* Define the file rules for the built-in suffix rules.  These will later
-     be converted into pattern rules.  We used to do this in
-     install_default_implicit_rules, but since that happens after reading
-     makefiles, it results in the built-in pattern rules taking precedence
-     over makefile-specified suffix rules, which is wrong.  */
-  install_default_suffix_rules ();
 
   /* Define some internal and special variables.  */
   define_automatic_variables ();
@@ -2332,6 +2331,11 @@ main (int argc, char **argv, char **envp)
      depended on.  Also do magic for special targets.  */
 
   snap_deps ();
+
+  /* Define the file rules for the built-in suffix rules.  These will later
+     be converted into pattern rules.  */
+
+  install_default_suffix_rules ();
 
   /* Convert old-style suffix rules to pattern rules.  It is important to
      do this before installing the built-in pattern rules below, so that
@@ -2849,7 +2853,7 @@ main (int argc, char **argv, char **envp)
             child.output.syncout = 0;
             child.environment = environ;
 
-            pid = child_execute_job (&child, 1, nargv);
+            pid = child_execute_job (&child, 1, (char **)nargv);
 
             /* is this loop really necessary? */
             do {
@@ -3778,7 +3782,7 @@ print_version (void)
      year, and none of the rest of it should be translated (including the
      word "Copyright"), so it hardly seems worth it.  */
 
-  printf ("%sCopyright (C) 1988-2022 Free Software Foundation, Inc.\n",
+  printf ("%sCopyright (C) 1988-2023 Free Software Foundation, Inc.\n",
           precede);
 
   printf (_("%sLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>\n\

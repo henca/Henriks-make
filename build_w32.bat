@@ -1,5 +1,5 @@
 @echo off
-:: Copyright (C) 1996-2022 Free Software Foundation, Inc.
+:: Copyright (C) 1996-2023 Free Software Foundation, Inc.
 :: This file is part of GNU Make.
 ::
 :: GNU Make is free software; you can redistribute it and/or modify it under
@@ -28,7 +28,7 @@ if "%1" == "-h" goto Usage
 if "%1" == "--help" goto Usage
 
 echo.
-echo Creating GNU Make for Windows 9X/NT/2K/XP/Vista/7/8/10
+echo Creating GNU Make for Windows 9X/NT/2K/XP/Vista/7/8/10/11
 echo.
 
 set MAKE=gnumake

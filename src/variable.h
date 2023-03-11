@@ -1,5 +1,5 @@
 /* Definitions for using variables in GNU Make.
-Copyright (C) 1988-2022 Free Software Foundation, Inc.
+Copyright (C) 1988-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -182,6 +182,8 @@ void define_new_function(const floc *flocp, const char *name,
                          unsigned int min, unsigned int max, unsigned int flags,
                          gmk_func_ptr func);
 struct variable *lookup_variable (const char *name, size_t length);
+struct variable *lookup_variable_for_file (const char *name, size_t length,
+                                           struct file *file);
 struct variable *lookup_variable_in_set (const char *name, size_t length,
                                          const struct variable_set *set);
 

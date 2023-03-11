@@ -81,7 +81,7 @@ all:; \$(info makeflags='\$(MAKEFLAGS)')
 }
 }
 
-# Strawberry Perl's exec()--or someting!--appears to replace all /tmp with the
+# Strawberry Perl's exec()--or something!--appears to replace all /tmp with the
 # user's %TEMP% value so we can't use that for -I testing.  Make a directory.
 
 mkdir('localtmp', 0777);
@@ -209,7 +209,7 @@ $answer
 # sv 63347.
 # Same as above, with makefile setting the value of the same variables as
 # defined on the cli.
-my $answer = 'erR -- hello:=world FOO=bar';
+$answer = 'erR -- hello:=world FOO=bar';
 run_make_test(q!
 $(info $(MAKEFLAGS))
 FOO=moon
@@ -224,7 +224,7 @@ $answer
 
 # sv 63347.
 # Same as above, with makefile overriding the value of cli definition.
-my $answer = 'erR -- hello:=world FOO=bar';
+$answer = 'erR -- hello:=world FOO=bar';
 run_make_test(q!
 $(info $(MAKEFLAGS))
 override FOO=moon
@@ -240,7 +240,7 @@ $answer
 
 # Same as above, and makefile overrides the value of cli definition.
 # resets MAKEOVERRIDES.
-my $answer = 'rR -- hello:=world FOO=bar';
+$answer = 'rR -- hello:=world FOO=bar';
 run_make_test(q!
 $(info $(MAKEFLAGS))
 override FOO=moon
@@ -259,7 +259,7 @@ rR -- \nrR
 # sv 63347.
 # MAKEFLAGS set is env and makefile sets MAKEFLAGS and there is a command
 # line definition.
-my $answer = ' -- bye=moon hello=world';
+$answer = ' -- bye=moon hello=world';
 $ENV{'MAKEFLAGS'} = 'hello=world';
 run_make_test(q!
 $(info $(MAKEFLAGS))
@@ -271,7 +271,7 @@ all:; $(info $(MAKEFLAGS))
 
 # sv 63347.
 # Conditional assignment and MAKEFLAGS.
-my $answer = 'B -- bye=moon hello=world';
+$answer = 'B -- bye=moon hello=world';
 $ENV{'MAKEFLAGS'} = 'hello=world';
 run_make_test(q!
 $(info $(MAKEFLAGS))
@@ -344,7 +344,7 @@ create_file('bye/makefile',
 all:; $(info $(hello))');
 
 # sv 63347.
-# Test that a cli definition takes precendence over a definition set in
+# Test that a cli definition takes precedence over a definition set in
 # submake.
 run_make_test(q!
 v:=$(shell $(MAKE) -C bye --no-print-directory)
@@ -389,7 +389,7 @@ all:; $(info good)
 #    contains the winning switch at parse and build time.
 # 9. MAKEFLAGS does not contain the beaten switch.
 
-my @flavors = ('=', ':=', ':::=', '+=');
+@flavors = ('=', ':=', ':::=', '+=');
 
 # sv 63537
 # -w vs --no-print-directory
@@ -489,8 +489,8 @@ run_make_test("
 MAKEFLAGS${fl}--no-print-directory
 \$(info \$(MAKEFLAGS))
 all:
-	\$(info \$(MAKEFLAGS))
-	\$(MAKE) -C lib2
+\t \$(info \$(MAKEFLAGS))
+\t \$(MAKE) -C lib2
 ", '-w',
 "#MAKE#: Entering directory '#PWD#'
 w
@@ -511,8 +511,8 @@ run_make_test("
 MAKEFLAGS${fl}--no-print-directory
 \$(info \$(MAKEFLAGS))
 all:
-	\$(info \$(MAKEFLAGS))
-	\$(MAKE) -C lib2
+\t \$(info \$(MAKEFLAGS))
+\t \$(MAKE) -C lib2
 ", '',
 "#MAKE#: Entering directory '#PWD#'
 w
@@ -535,66 +535,70 @@ rmdir('lib2');
 # -S in env.
 $ENV{'MAKEFLAGS'} = '-S';
 run_make_test(q!
+.RECIPEPREFIX := >
 $(info $(MAKEFLAGS))
 all: one two
 one:
-	$(info $(MAKEFLAGS))
-	false
+> $(info $(MAKEFLAGS))
+> #HELPER# -q fail 1
 two:; $(info $@)
 !, '',
 "S
 S
-false
-#MAKE#: *** [#MAKEFILE#:6: one] Error 1", 512);
+#HELPER# -q fail 1
+#MAKE#: *** [#MAKEFILE#:7: one] Error 1", 512);
 
 # -S in env, -k on the command line.
 $ENV{'MAKEFLAGS'} = '-S';
 run_make_test(q!
+.RECIPEPREFIX := >
 $(info $(MAKEFLAGS))
 all: one two
 one:
-	$(info $(MAKEFLAGS))
-	false
+> $(info $(MAKEFLAGS))
+> #HELPER# -q fail 1
 two:; $(info $@)
 !, '-k',
 "k
 k
-false
-#MAKE#: *** [#MAKEFILE#:6: one] Error 1
+#HELPER# -q fail 1
+#MAKE#: *** [#MAKEFILE#:7: one] Error 1
 two
 #MAKE#: Target 'all' not remade because of errors.", 512);
 
 # -k in env.
 $ENV{'MAKEFLAGS'} = '-k';
 run_make_test(q!
+.RECIPEPREFIX := >
 $(info $(MAKEFLAGS))
 all: one two
 one:
-	$(info $(MAKEFLAGS))
-	false
+> $(info $(MAKEFLAGS))
+> #HELPER# -q fail 1
 two:; $(info $@)
 !, '',
 "k
 k
-false
-#MAKE#: *** [#MAKEFILE#:6: one] Error 1
+#HELPER# -q fail 1
+#MAKE#: *** [#MAKEFILE#:7: one] Error 1
 two
 #MAKE#: Target 'all' not remade because of errors.", 512);
 
 # -k in env, -S on the command line.
 $ENV{'MAKEFLAGS'} = '-k';
 run_make_test(q!
+.RECIPEPREFIX := >
 $(info $(MAKEFLAGS))
 all: one two
 one:
-	$(info $(MAKEFLAGS))
-	false
+> $(info $(MAKEFLAGS))
+> #HELPER# -q fail 1
 two:; $(info $@)
 !, '-S',
 "S
 S
-false
-#MAKE#: *** [#MAKEFILE#:6: one] Error 1", 512);
+#HELPER# -q fail 1
+#MAKE#: *** [#MAKEFILE#:7: one] Error 1", 512);
 
 delete $ENV{'MAKEFLAGS'};
 
@@ -605,13 +609,13 @@ MAKEFLAGS${fl}-k
 \$(info \$(MAKEFLAGS))
 all: one two
 one:
-	\$(info \$(MAKEFLAGS))
-	false
+\t \$(info \$(MAKEFLAGS))
+\t #HELPER# -q fail 1
 two:; \$(info \$@)
 ", '',
 "k
 k
-false
+#HELPER# -q fail 1
 #MAKE#: *** [#MAKEFILE#:7: one] Error 1
 two
 #MAKE#: Target 'all' not remade because of errors.", 512);
@@ -625,13 +629,13 @@ MAKEFLAGS${fl}-k
 \$(info \$(MAKEFLAGS))
 all: one two
 one:
-	\$(info \$(MAKEFLAGS))
-	false
+\t \$(info \$(MAKEFLAGS))
+\t #HELPER# -q fail 1
 two:; \$(info \$@)
 ", '-S',
 "S
 S
-false
+#HELPER# -q fail 1
 #MAKE#: *** [#MAKEFILE#:7: one] Error 1", 512);
 }
 
@@ -644,13 +648,13 @@ MAKEFLAGS${fl}-k
 \$(info \$(MAKEFLAGS))
 all: one two
 one:
-	\$(info \$(MAKEFLAGS))
-	false
+\t \$(info \$(MAKEFLAGS))
+\t #HELPER# -q fail 1
 two:; \$(info \$@)
 ", '',
 "S
 S
-false
+#HELPER# -q fail 1
 #MAKE#: *** [#MAKEFILE#:7: one] Error 1", 512);
 }
 
@@ -664,13 +668,13 @@ MAKEFLAGS${fl}-S
 \$(info \$(MAKEFLAGS))
 all: one two
 one:
-	\$(info \$(MAKEFLAGS))
-	false
+\t \$(info \$(MAKEFLAGS))
+\t #HELPER# -q fail 1
 two:; \$(info \$@)
 ", '',
 "S
 S
-false
+#HELPER# -q fail 1
 #MAKE#: *** [#MAKEFILE#:7: one] Error 1", 512);
 }
 
@@ -681,13 +685,13 @@ MAKEFLAGS${fl}-S
 \$(info \$(MAKEFLAGS))
 all: one two
 one:
-	\$(info \$(MAKEFLAGS))
-	false
+\t \$(info \$(MAKEFLAGS))
+\t #HELPER# -q fail 1
 two:; \$(info \$@)
 ", '-k',
 "k
 k
-false
+#HELPER# -q fail 1
 #MAKE#: *** [#MAKEFILE#:7: one] Error 1
 two
 #MAKE#: Target 'all' not remade because of errors.", 512);
@@ -702,13 +706,13 @@ MAKEFLAGS${fl}-S
 \$(info \$(MAKEFLAGS))
 all: one two
 one:
-	\$(info \$(MAKEFLAGS))
-	false
+\t \$(info \$(MAKEFLAGS))
+\t #HELPER# -q fail 1
 two:; \$(info \$@)
 ", '',
 "k
 k
-false
+#HELPER# -q fail 1
 #MAKE#: *** [#MAKEFILE#:7: one] Error 1
 two
 #MAKE#: Target 'all' not remade because of errors.", 512);

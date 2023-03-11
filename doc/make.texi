@@ -3,7 +3,7 @@
 @setfilename make.info
 
 @include version.texi
-@set EDITION 0.76
+@set EDITION 0.77
 
 @settitle GNU @code{make}
 @setchapternewpage odd
@@ -27,7 +27,7 @@ of @cite{The GNU Make Manual}, for GNU @code{make} version @value{VERSION}.
 Copyright @copyright{} 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995,
 1996, 1997, 1998, 1999, 2000, 2002, 2003, 2004, 2005, 2006, 2007,
 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-2020, 2021, 2022 Free Software Foundation, Inc.
+2020, 2021, 2022, 2023 Free Software Foundation, Inc.
 
 @quotation
 Permission is granted to copy, distribute and/or modify this document
@@ -1709,7 +1709,7 @@ the results of the expanded macro (@pxref{Eval Function}).
 @findex .SECONDEXPANSION
 Previously we learned that GNU @code{make} works in two distinct
 phases: a read-in phase and a target-update phase (@pxref{Reading
-Makefiles, , How @code{make} Reads a Makefile}).  GNU make also has
+Makefiles, , How @code{make} Reads a Makefile}).  GNU Make also has
 the ability to enable a @emph{second expansion} of the prerequisites
 (only) for some or all targets defined in the makefile.  In order for
 this second expansion to occur, the special target
@@ -2153,7 +2153,7 @@ The wildcard characters in @code{make} are @samp{*}, @samp{?} and
 specifies a list of all the files (in the working directory) whose names
 end in @samp{.c}.
 
-If an expression matches multiple files than the results will be
+If an expression matches multiple files then the results will be
 sorted.@footnote{Some older versions of GNU @code{make} did not sort the
 results of wildcard expansion.}  However multiple expressions will not be
 globally sorted.  For example, @file{*.c *.h} will list all the files whose
@@ -3074,7 +3074,7 @@ Suppose @file{hello.bin} is up to date in regards to the source files,
 @code{.SECONDARY} make would rebuild @file{hello.o} then rebuild
 @file{hello.bin} even though the source files had not changed.  By declaring
 @file{hello.o} as @code{.SECONDARY} @code{make} will not need to rebuild it
-and won't need to rebuild @file{hello.bin} either.  Of course, of one of the
+and won't need to rebuild @file{hello.bin} either.  Of course, if one of the
 source files @emph{were} updated then all object files would be rebuilt so
 that the creation of @file{hello.bin} could succeed.
 
@@ -5225,7 +5225,7 @@ string to avoid duplicating flags during recursion.
 
 It's best to use @code{GNUMAKEFLAGS} only with flags which won't
 materially change the behavior of your makefiles.  If your makefiles
-require GNU make anyway then simply use @code{MAKEFLAGS}.  Flags such
+require GNU Make anyway then simply use @code{MAKEFLAGS}.  Flags such
 as @samp{--no-print-directory} or @samp{--output-sync} may be
 appropriate for @code{GNUMAKEFLAGS}.
 
@@ -11332,7 +11332,7 @@ If no pattern rule has been found then try step 5 and step 6 again with a
 modified definition of ``ought to exist'': if a filename is mentioned as a
 target or as an explicit prerequisite of @emph{any} target, then it ought to
 exist.  This check is only present for backward-compatibility with older
-versions of GNU make: we don't recommend relying on it.
+versions of GNU Make: we don't recommend relying on it.
 
 @item
 If no implicit rule applies, the rule for @code{.DEFAULT}, if any,
@@ -11497,7 +11497,7 @@ and make all the members of the archive file prerequisites of that rule.
 For example,
 
 @example
-libfoo.a: libfoo.a(x.o) libfoo.a(y.o) @dots{}
+libfoo.a: libfoo.a(x.o y.o @dots{})
         ranlib libfoo.a
 @end example
 
@@ -11518,15 +11518,38 @@ updates the @file{__.SYMDEF} member automatically.
 @cindex archive, and @code{-j}
 @cindex @code{-j}, and archive update
 
-It is important to be careful when using parallel execution (the
-@code{-j} switch; @pxref{Parallel, ,Parallel Execution}) and archives.
-If multiple @code{ar} commands run at the same time on the same archive
-file, they will not know about each other and can corrupt the file.
+The built-in rules for updating archives are incompatible with parallel
+builds.  These rules (required by the POSIX standard) add each object file
+into the archive as it's compiled.  When parallel builds are enabled this
+allows multiple @code{ar} commands to be updating the same archive
+simultaneously, which is not supported.
 
-Possibly a future version of @code{make} will provide a mechanism to
-circumvent this problem by serializing all recipes that operate on the
-same archive file.  But for the time being, you must either write your
-makefiles to avoid this problem in some other way, or not use @code{-j}.
+If you want to use parallel builds with archives you can override the default
+rules by adding these lines to your makefile:
+
+@example
+(%) : % ;
+%.a : ; $(AR) $(ARFLAGS) $@@ $?
+@end example
+
+The first line changes the rule that updates an individual object in the
+archive to do nothing, and the second line changes the default rule for
+building an archive to update all the outdated objects (@code{$?}) in one
+command.
+
+Of course you will still need to declare the prerequisites of your library
+using the archive syntax:
+
+@example
+libfoo.a: libfoo.a(x.o y.o @dots{})
+@end example
+
+If you prefer to write an explicit rule you can use:
+
+@example
+libfoo.a: libfoo.a(x.o y.o @dots{})
+        $(AR) $(ARFLAGS) $@@ $?
+@end example
 
 @node Archive Suffix Rules,  , Archive Pitfalls, Archives
 @section Suffix Rules for Archive Files
@@ -11753,7 +11776,7 @@ internalize it:
 @example
 @group
 define GUILEIO
-;; A simple Guile IO library for GNU make
+;; A simple Guile IO library for GNU Make
 
 (define MKPORT #f)
 
@@ -11819,10 +11842,10 @@ symbol to be stored in a @code{make} variable.
 @cartouche
 @quotation Warning
 The @code{load} directive and extension capability is considered a
-``technology preview'' in this release of GNU make.  We encourage you
+``technology preview'' in this release of GNU Make.  We encourage you
 to experiment with this feature and we appreciate any feedback on it.
 However we cannot guarantee to maintain backward-compatibility in the
-next release.  Consider using GNU Guile instead for extending GNU make
+next release.  Consider using GNU Guile instead for extending GNU Make
 (@pxref{Guile Function, ,The @code{guile} Function}).
 @end quotation
 @end cartouche
@@ -11892,7 +11915,7 @@ The initializing function will be provided the file name and line
 number of the invocation of the @code{load} operation.  It should
 return a value of type @code{int}, which must be @code{0} on failure
 and non-@code{0} on success.  If the return value is @code{-1}, then
-GNU make will @emph{not} attempt to rebuild the object file
+GNU Make will @emph{not} attempt to rebuild the object file
 (@pxref{Remaking Loaded Objects, ,How Loaded Objects Are Remade}).
 
 For example:

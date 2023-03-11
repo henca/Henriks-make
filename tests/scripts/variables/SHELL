@@ -36,7 +36,7 @@ run_make_test("SHELL := $altshell\n".'
 all:;@echo "$(SHELL) $$SHELL"
 ', '', "$altshell $mshell");
 
-# As a GNU make extension, if make's SHELL variable is explicitly exported,
+# As a GNU Make extension, if make's SHELL variable is explicitly exported,
 # then we really _DO_ export it.
 
 $ENV{SHELL} = $mshell;
@@ -66,8 +66,8 @@ one two:;@echo "$@: $(SHELL) $$SHELL"
 
 # Test .SHELLFLAGS
 
-# We don't know the output here: on Solaris for example, every line printed
-# by the shell in -x mode has a trailing space (!!)
+# We don't know the output here: on some systems, for example, every line
+# printed by the shell in -x mode has a trailing space!
 my $script = 'true; true';
 my $flags = '-xc';
 my $out = `$sh_name $flags '$script' 2>&1`;
@@ -94,17 +94,14 @@ all: ; \@$script
               '', $out);
 }
 
-# We can't just use "false" because on different systems it provides a
-# different exit code--once again Solaris: false exits with 255 not 1
-$script = 'true; false; true';
+$script = subst_make_string('true; #HELPER# -q fail 1; true');
 $flags = '-xec';
 $out = `$sh_name $flags '$script' 2>&1`;
-my $err = $? >> 8;
 
 run_make_test(qq!
 .SHELLFLAGS = $flags
 all: ; \@$script
 !,
-              '', "$out#MAKE#: *** [#MAKEFILE#:3: all] Error $err\n", 512);
+              '', "${out}#MAKE#: *** [#MAKEFILE#:3: all] Error 1", 512);
 
 1;

@@ -11,7 +11,7 @@
 #                         [-make <make prog>]
 #                        (and others)
 
-# Copyright (C) 1992-2022 Free Software Foundation, Inc.
+# Copyright (C) 1992-2023 Free Software Foundation, Inc.
 # This file is part of GNU Make.
 #
 # GNU Make is free software; you can redistribute it and/or modify it under
@@ -56,7 +56,7 @@ $memcheck_args = '--num-callers=15 --tool=memcheck --leak-check=full --suppressi
 $massif_args = '--num-callers=15 --tool=massif --alloc-fn=xmalloc --alloc-fn=xcalloc --alloc-fn=xrealloc --alloc-fn=xstrdup --alloc-fn=xstrndup';
 $pure_log = undef;
 
-# The location of the GNU make source directory
+# The location of the GNU Make source directory
 $srcdir = undef;
 $fqsrcdir = undef;
 $srcvol = undef;
@@ -104,6 +104,7 @@ if ($^O eq 'VMS')
 # We want them from the C locale regardless of our current locale.
 
 $ERR_no_such_file = undef;
+$ERR_no_such_file_code = "2";
 $ERR_read_only_file = undef;
 $ERR_unreadable_file = undef;
 $ERR_nonexe_file = undef;
@@ -128,7 +129,7 @@ sub valid_option
    if ($option =~ /^-srcdir$/i) {
        $srcdir = shift @argv;
        if (! -f File::Spec->catfile($srcdir, 'src', 'gnumake.h')) {
-           print "$option $srcdir: Not a valid GNU make source directory.\n";
+           print "$option $srcdir: Not a valid GNU Make source directory.\n";
            exit 1;
        }
        return 1;
@@ -423,6 +424,9 @@ sub set_defaults
       print "Opened non-existent file! Skipping related tests.\n";
   } else {
       $ERR_no_such_file = "$!";
+      if ($osname eq 'os390') {
+          $ERR_no_such_file_code = "129";
+      }
   }
 
   unlink('file.out');
@@ -601,7 +605,7 @@ sub set_more_defaults
   }
 
   $string = `$make_path -v`;
-  $string =~ /^(GNU Make [^,\n]*)/ or die "$make_path is not GNU make.  Version:\n$string";
+  $string =~ /^(GNU Make [^,\n]*)/ or die "$make_path is not GNU Make.  Version:\n$string";
   $testee_version = "$1\n";
 
   create_file('null.mk', '');
@@ -667,6 +671,7 @@ sub set_more_defaults
 
   create_file('features.mk', 'all:;$(info $(.FEATURES))');
   %FEATURES = map { $_ => 1 } split /\s+/, `$make_path -sf features.mk`;
+  print "$make_path FEATURES: @{[%FEATURES]}\n" if $verbose;
   unlink('features.mk');
 
   # Find the default values for different built-in variables

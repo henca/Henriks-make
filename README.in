@@ -184,6 +184,8 @@ Ports
 
   - See README.Amiga for details about GNU Make on AmigaDOS.
 
+  - See README.zOS for details about GNU Make on z/OS.
+
   - See README.W32 for details about GNU Make on Windows NT, 95, or 98.
 
   - See README.DOS for compilation instructions on MS-DOS and MS-Windows
@@ -205,7 +207,7 @@ at the right README!
 
 
 -------------------------------------------------------------------------------
-Copyright (C) 1988-2022 Free Software Foundation, Inc.
+Copyright (C) 1988-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the

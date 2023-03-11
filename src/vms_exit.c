@@ -7,7 +7,7 @@
  * Author: John E. Malmberg
  */
 
-/* Copyright (C) 2014-2022 Free Software Foundation, Inc.
+/* Copyright (C) 2014-2023 Free Software Foundation, Inc.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
 terms of the GNU General Public License as published by the Free Software
@@ -36,7 +36,7 @@ decc$exit (int status);
 #endif
 
 /* Lowest legal non-success VMS exit code is 8 */
-/* GNU make only defines codes 0, 1, 2 */
+/* GNU Make only defines codes 0, 1, 2 */
 /* So assume any exit code > 8 is a VMS exit code */
 
 #ifndef MAX_EXPECTED_EXIT_CODE

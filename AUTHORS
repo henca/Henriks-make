@@ -47,6 +47,10 @@ GNU Make porting efforts:
       Earnie Boyd <earnie@uses.sf.net>
       Troy Runkel <Troy.Runkel@mathworks.com>
       Juan M. Guerrero <juan.guerrero@gmx.de>
+      KO Myung-Hun <komh78@gmail.com>
+
+  Port to z/OS by:
+      Igor Todorovski <itodorov@ca.ibm.com>
 
 -----------------------------------
 Other contributors:
@@ -107,7 +111,7 @@ With suggestions/comments/bug reports from a cast of ... well ...
 hundreds, anyway :)
 
 -------------------------------------------------------------------------------
-Copyright (C) 1997-2022 Free Software Foundation, Inc.
+Copyright (C) 1997-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the

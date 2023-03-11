@@ -1,5 +1,5 @@
 /* Miscellaneous generic support functions for GNU Make.
-Copyright (C) 1988-2022 Free Software Foundation, Inc.
+Copyright (C) 1988-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -26,6 +26,11 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #ifdef WINDOWS32
 # include <windows.h>
 # include <io.h>
+#endif
+
+#ifdef __EMX__
+# define INCL_DOS
+# include <os2.h>
 #endif
 
 #ifdef HAVE_FCNTL_H
@@ -158,7 +163,7 @@ collapse_continuations (char *line)
       if (i & 1)
         {
           /* Backslash/newline handling:
-             In traditional GNU make all trailing whitespace, consecutive
+             In traditional GNU Make all trailing whitespace, consecutive
              backslash/newlines, and any leading non-newline whitespace on the
              next line is reduced to a single space.
              In POSIX, each backslash/newline and is replaced by a space.  */
@@ -683,7 +688,7 @@ get_tmpfd (char **name)
     *name = NULL;
   else
     {
-      /* If there's an os-specific way to get an anoymous temp file use it.  */
+      /* If there's an os-specific way to get an anonymous temp file use it.  */
       fd = os_anontmp ();
       if (fd >= 0)
         return fd;
@@ -779,6 +784,40 @@ get_tmpfile (char **name)
 
   return file;
 }
+
+
+#if HAVE_TTYNAME && defined(__EMX__)
+/* OS/2 kLIBC has a declaration for ttyname(), so configure finds it.
+   But, it is not implemented!  Roll our own.  */
+char *ttyname (int fd)
+{
+  ULONG type;
+  ULONG attr;
+  ULONG rc;
+
+  rc = DosQueryHType (fd, &type, &attr);
+  if (rc)
+    {
+      errno = EBADF;
+      return NULL;
+    }
+
+  if (type == HANDTYPE_DEVICE)
+    {
+      if (attr & 3)     /* 1 = KBD$, 2 = SCREEN$ */
+        return (char *) "/dev/con";
+
+      if (attr & 4)     /* 4 = NUL */
+        return (char *) "/dev/nul";
+
+      if (attr & 8)     /* 8 = CLOCK$ */
+        return (char *) "/dev/clock$";
+    }
+
+  errno = ENOTTY;
+  return NULL;
+}
+#endif
 
 
 #if !HAVE_STRCASECMP && !HAVE_STRICMP && !HAVE_STRCMPI

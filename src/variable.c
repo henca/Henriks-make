@@ -1,5 +1,5 @@
 /* Internals of variables for GNU Make.
-Copyright (C) 1988-2022 Free Software Foundation, Inc.
+Copyright (C) 1988-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -472,7 +472,7 @@ lookup_variable (const char *name, size_t length)
       const struct variable_set *set = setlist->set;
       struct variable *v;
 
-      v = (struct variable *) hash_find_item ((struct hash_table *) &set->table, &var_key);
+      v = hash_find_item ((struct hash_table *) &set->table, &var_key);
       if (v && (!is_parent || !v->private_var))
         return v->special ? lookup_special_var (v) : v;
 
@@ -538,6 +538,29 @@ lookup_variable (const char *name, size_t length)
 
   return 0;
 }
+/* Lookup a variable whose name is a string starting at NAME
+   and with LENGTH chars.  NAME need not be null-terminated.
+   Returns address of the 'struct variable' containing all info
+   on the variable, or nil if no such variable is defined.  */
+
+struct variable *
+lookup_variable_for_file (const char *name, size_t length, struct file *file)
+{
+  struct variable *var;
+  struct variable_set_list *savev;
+
+  if (file == NULL)
+    return lookup_variable (name, length);
+
+  savev = current_variable_set_list;
+  current_variable_set_list = file->variables;
+
+  var = lookup_variable (name, length);
+
+  current_variable_set_list = savev;
+
+  return var;
+}
 
 /* Lookup a variable whose name is a string starting at NAME
    and with LENGTH chars in set SET.  NAME need not be null-terminated.
@@ -553,7 +576,7 @@ lookup_variable_in_set (const char *name, size_t length,
   var_key.name = (char *) name;
   var_key.length = (unsigned int) length;
 
-  return (struct variable *) hash_find_item ((struct hash_table *) &set->table, &var_key);
+  return hash_find_item ((struct hash_table *) &set->table, &var_key);
 }
 
 /* Initialize FILE's variable set list.  If FILE already has a variable set
@@ -905,7 +928,7 @@ define_automatic_variables (void)
     if (!replace || !*replace->value)
       replace = lookup_variable ("OS2_SHELL", 9);
 # else
-#   warning NO_CMD_DEFAULT: GNU make will not use CMD.EXE as default shell
+#   warning NO_CMD_DEFAULT: GNU Make will not use CMD.EXE as default shell
 # endif
 
     if (replace && *replace->value)
@@ -1065,7 +1088,8 @@ target_environment (struct file *file, int recursive)
   for (s = set_list; s != 0; s = s->next)
     {
       struct variable_set *set = s->set;
-      int isglobal = set == &global_variable_set;
+      const int islocal = s == set_list;
+      const int isglobal = set == &global_variable_set;
 
       v_slot = (struct variable **) set->table.ht_vec;
       v_end = v_slot + set->table.ht_size;
@@ -1075,11 +1099,17 @@ target_environment (struct file *file, int recursive)
             struct variable **evslot;
             struct variable *v = *v_slot;
 
+            if (!islocal && v->private_var)
+              continue;
+
             evslot = (struct variable **) hash_find_slot (&table, v);
 
             if (HASH_VACANT (*evslot))
               {
-                /* If we're not global, or we are and should export, add it.  */
+                /* We'll always add target-specific variables, since we may
+                   discover that they should be exported later: we'll check
+                   again below.  For global variables only add them if they're
+                   exportable.  */
                 if (!isglobal || should_export (v))
                   hash_insert_at (&table, v, evslot);
               }
@@ -1107,8 +1137,9 @@ target_environment (struct file *file, int recursive)
 
         /* If V is recursively expanded and didn't come from the environment,
            expand its value.  If it came from the environment, it should
-           go back into the environment unchanged.  */
-        if (v->recursive && v->origin != o_env && v->origin != o_env_override)
+           go back into the environment unchanged... except MAKEFLAGS.  */
+        if (v->recursive && ((v->origin != o_env && v->origin != o_env_override)
+                             || streq (v->name, MAKEFLAGS_NAME)))
           value = cp = recursively_expand_for_file (v, file);
 
         /* If this is the SHELL variable remember we already added it.  */
@@ -1786,20 +1817,34 @@ try_variable_definition (const floc *flocp, const char *line,
 /* These variables are internal to make, and so considered "defined" for the
    purposes of warn_undefined even if they are not really defined.  */
 
-static const char *const defined_vars[] = {
-  "MAKECMDGOALS", "MAKE_RESTARTS", "MAKE_TERMOUT", "MAKE_TERMERR",
-  "MAKEOVERRIDES", ".DEFAULT", "-*-command-variables-*-", "-*-eval-flags-*-",
-  "VPATH", "GPATH",
-  NULL };
+struct defined_vars
+  {
+    const char *name;
+    size_t len;
+  };
+
+static const struct defined_vars defined_vars[] = {
+  { STRING_SIZE_TUPLE ("MAKECMDGOALS") },
+  { STRING_SIZE_TUPLE ("MAKE_RESTARTS") },
+  { STRING_SIZE_TUPLE ("MAKE_TERMOUT") },
+  { STRING_SIZE_TUPLE ("MAKE_TERMERR") },
+  { STRING_SIZE_TUPLE ("MAKEOVERRIDES") },
+  { STRING_SIZE_TUPLE (".DEFAULT") },
+  { STRING_SIZE_TUPLE ("-*-command-variables-*-") },
+  { STRING_SIZE_TUPLE ("-*-eval-flags-*-") },
+  { STRING_SIZE_TUPLE ("VPATH") },
+  { STRING_SIZE_TUPLE ("GPATH") },
+  { NULL, 0 }
+};
 
 void
 warn_undefined (const char *name, size_t len)
 {
   if (warn_undefined_variables_flag)
     {
-      const char *const *cp;
-      for (cp = defined_vars; *cp != NULL; ++cp)
-        if (memcmp (*cp, name, len) == 0 && (*cp)[len] == '\0')
+      const struct defined_vars *dp;
+      for (dp = defined_vars; dp->name != NULL; ++dp)
+        if (dp->len == len && memcmp (dp->name, name, len) == 0)
           return;
 
       error (reading_file, len, _("warning: undefined variable '%.*s'"),
@@ -1983,8 +2028,10 @@ sync_Path_environment ()
   if (!path)
     return;
 
-  /* Convert PATH into something WINDOWS32 world can grok.  */
-  convert_Path_to_windows32 (path, ';');
+  /* Convert the value of PATH into something WINDOWS32 world can grok.
+    Note: convert_Path_to_windows32 must see only the value of PATH,
+    and see it from its first character, to do its tricky job.  */
+  convert_Path_to_windows32 (path + CSTRLEN ("PATH="), ';');
 
   environ_path = path;
   putenv (environ_path);

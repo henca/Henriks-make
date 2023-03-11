@@ -6,24 +6,62 @@ $details = "";
 
 
 # Ensure turning on .POSIX enables the -e flag for the shell
-# We can't assume the exit value of "false" because on different systems it's
-# different.
 
-my $script = 'false; true';
-my $flags = '-ec';
-my $out = `$sh_name $flags '$script' 2>&1`;
-my $err = $? >> 8;
-run_make_test(qq!
+run_make_test(q!
 .POSIX:
-all: ; \@$script
+all: ; @#HELPER# -q fail 1; #HELPER# out hello
 !,
-              '', "#MAKE#: *** [#MAKEFILE#:3: all] Error $err\n", 512);
+              '', "#MAKE#: *** [#MAKEFILE#:3: all] Error 1\n", 512);
+
+# But explicit settings must still take precedence
+
+run_make_test(q!
+.POSIX:
+all: ; @-#HELPER# -q fail 1; #HELPER# out hello
+.SHELLFLAGS = -c
+!,
+              '', "hello");
+
+run_make_test(q!
+.POSIX:
+all: ; @-#HELPER# -q fail 1; #HELPER# out hello
+all: .SHELLFLAGS = -c
+!,
+              '', "hello");
+
+# SV 63667: We shouldn't add -e to sh if errors are ignored
+
+run_make_test(q!
+.POSIX:
+all: ; @-#HELPER# -q fail 1; #HELPER# out hello
+!,
+              '', "hello\n");
+
+# But explicit settings must still take precedence
+
+run_make_test(q!
+.POSIX:
+all: ; @-#HELPER# -q fail 1; #HELPER# out hello
+.SHELLFLAGS = -ec
+!,
+              '', "#MAKE#: [#MAKEFILE#:3: all] Error 1 (ignored)\n");
+
+run_make_test(q!
+.POSIX:
+all: ; @-#HELPER# -q fail 1; #HELPER# out hello
+all: .SHELLFLAGS = -ec
+!,
+              '', "#MAKE#: [#MAKEFILE#:3: all] Error 1 (ignored)\n");
 
 # User settings must override .POSIX
 # In the standard .POSIX must be the first thing in the makefile
-# but we relax that rule in GNU make.
-$flags = '-xc';
-$out = `$sh_name $flags '$script' 2>&1`;
+# but we relax that rule in GNU Make.
+
+# Different versions of sh generate different output for -x so check it
+my $script = subst_make_string('#HELPER# -q fail 1; true');
+my $flags = '-xc';
+my $out = `$sh_name $flags '$script' 2>&1`;
+
 run_make_test(qq!
 .SHELLFLAGS = $flags
 .POSIX:

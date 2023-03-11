@@ -1,5 +1,5 @@
 /* POSIX-based operating system interface for GNU Make.
-Copyright (C) 2016-2022 Free Software Foundation, Inc.
+Copyright (C) 2016-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -23,6 +23,10 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 # define FD_OK(_f) (fcntl ((_f), F_GETFD) != -1)
 #elif defined(HAVE_SYS_FILE_H)
 # include <sys/file.h>
+#endif
+#if MK_OS_ZOS
+/* FIXME: HAVE_PSELECT path hangs on z/OS */
+#undef HAVE_PSELECT
 #endif
 
 #if !defined(FD_OK)
@@ -132,6 +136,9 @@ set_blocking (int fd, int blocking)
       if (r < 0)
         pfatal_with_name ("fcntl(O_NONBLOCK)");
     }
+#else
+  (void) fd;
+  (void) blocking;
 #endif
 }
 
@@ -140,8 +147,8 @@ jobserver_setup (int slots, const char *style)
 {
   int r;
 
-#if HAVE_MKFIFO
-  if (style == NULL || strcmp (style, "fifo") == 0)
+#if JOBSERVER_USE_FIFO
+  if (!style || strcmp (style, "fifo") == 0)
     {
   /* Unfortunately glibc warns about uses of mktemp even though we aren't
      using it in dangerous way here.  So avoid this by generating our own
@@ -617,7 +624,7 @@ jobserver_acquire (int timeout)
      go back and reap_children(), and try again.  */
   errno = saved_errno;
 
-  if (errno != EINTR && errno != EBADF)
+  if (errno != EINTR && errno != EBADF && errno != EAGAIN)
     pfatal_with_name (_("read jobs pipe"));
 
   if (errno == EBADF)

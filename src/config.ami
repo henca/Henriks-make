@@ -1,5 +1,5 @@
 /* config.h -- hand-massaged for Amiga                                  -*-C-*-
-Copyright (C) 1995-2022 Free Software Foundation, Inc.
+Copyright (C) 1995-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -176,7 +176,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 /* Define this if the SCCS 'get' command understands the '-G<file>' option.  */
 /* #undef SCCS_GET_MINUS_G */
 
-/* Define this to enable job server support in GNU make.  */
+/* Define this to enable job server support in GNU Make.  */
 /* #undef MAKE_JOBSERVER */
 
 /* Define to be the nanoseconds member of struct stat's st_mtim,
@@ -329,3 +329,6 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 /* Define to `int' if <sys/types.h> does not define. */
 #define ssize_t int
+
+/* Include customized declarations.  */
+#include "../src/mkcustom.h"

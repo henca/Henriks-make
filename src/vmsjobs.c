@@ -1,7 +1,7 @@
 /* --------------- Moved here from job.c ---------------
    This file must be #included in job.c, as it accesses static functions.
 
-Copyright (C) 1996-2022 Free Software Foundation, Inc.
+Copyright (C) 1996-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -28,7 +28,7 @@ void
 decc$exit (int status);
 
 /* Lowest legal non-success VMS exit code is 8 */
-/* GNU make only defines codes 0, 1, 2 */
+/* GNU Make only defines codes 0, 1, 2 */
 /* So assume any exit code > 8 is a VMS exit code */
 
 #ifndef MAX_EXPECTED_EXIT_CODE
@@ -1233,7 +1233,7 @@ child_execute_job (struct childbase *child, int good_stdin UNUSED, char *argv)
 
      Create a *.com file if either the command is too long for
      lib$spawn, or if a redirect appending to a file is desired, or
-     symbol substitition.
+     symbol substitution.
   */
 
   if (vms_always_use_cmd_file || token.use_cmd_file)

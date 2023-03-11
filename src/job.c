@@ -1,5 +1,5 @@
 /* Job execution and handling for GNU Make.
-Copyright (C) 1988-2022 Free Software Foundation, Inc.
+Copyright (C) 1988-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -34,9 +34,6 @@ extern void decrease_jobs(void);
 
 /* Default shell to use.  */
 #ifdef WINDOWS32
-# ifdef HAVE_STRINGS_H
-#  include <strings.h>  /* for strcasecmp, strncasecmp */
-# endif
 # include <windows.h>
 
 const char *default_shell = "sh.exe";
@@ -1211,7 +1208,7 @@ start_job_command (struct child *child)
            | child->file->cmds->lines_flags[child->command_line - 1]);
 
   p = child->command_ptr;
-  child->noerror = ((flags & COMMANDS_NOERROR) != 0);
+  child->noerror = ANY_SET (flags, COMMANDS_NOERROR);
 
   while (*p != '\0')
     {
@@ -1227,7 +1224,7 @@ start_job_command (struct child *child)
       ++p;
     }
 
-  child->recursive = ((flags & COMMANDS_RECURSE) != 0);
+  child->recursive = ANY_SET (flags, COMMANDS_RECURSE);
 
   /* Update the file's command flags with any new ones we found.  We only
      keep the COMMANDS_RECURSE setting.  Even this isn't 100% correct; we are
@@ -1312,7 +1309,7 @@ start_job_command (struct child *child)
      command line, or 'succeeded' otherwise.  The exit status of 1 tells the
      user that -q is saying 'something to do'; the exit status for a random
      error is 2.  */
-  if (argv != 0 && question_flag && !(flags & COMMANDS_RECURSE))
+  if (argv != 0 && question_flag && NONE_SET (flags, COMMANDS_RECURSE))
     {
       FREE_ARGV (argv);
 #ifdef VMS
@@ -1328,7 +1325,7 @@ start_job_command (struct child *child)
 #endif
     }
 
-  if (touch_flag && !(flags & COMMANDS_RECURSE))
+  if (touch_flag && NONE_SET (flags, COMMANDS_RECURSE))
     {
       /* Go on to the next command.  It might be the recursive one.
          We construct ARGV only to find the end of the command line.  */
@@ -1362,7 +1359,7 @@ start_job_command (struct child *child)
      in SYNC_RECURSE mode or this command is not recursive.  We'll also check
      output_sync separately below in case it changes due to error.  */
   child->output.syncout = output_sync && (output_sync == OUTPUT_SYNC_RECURSE
-                                          || !(flags & COMMANDS_RECURSE));
+                                          || NONE_SET (flags, COMMANDS_RECURSE));
 
   OUTPUT_SET (&child->output);
 
@@ -1373,7 +1370,7 @@ start_job_command (struct child *child)
 
   /* Print the command if appropriate.  */
   if (just_print_flag || ISDB (DB_PRINT)
-      || (!(flags & COMMANDS_SILENT) && !run_silent))
+      || (NONE_SET (flags, COMMANDS_SILENT) && !run_silent))
     OS (message, 0, "%s", p);
 
   /* Tell update_goal_chain that a command has been started on behalf of
@@ -1413,7 +1410,7 @@ start_job_command (struct child *child)
 
   /* If -n was given, recurse to get the next line in the sequence.  */
 
-  if (just_print_flag && !(flags & COMMANDS_RECURSE))
+  if (just_print_flag && NONE_SET (flags, COMMANDS_RECURSE))
     {
       FREE_ARGV (argv);
       goto next_command;
@@ -1438,9 +1435,16 @@ start_job_command (struct child *child)
   child->deleted = 0;
 
 #ifndef _AMIGA
-  /* Set up the environment for the child.  */
+  /* Set up the environment for the child.
+     It's a slight inaccuracy to set the environment for recursive make even
+     for command lines that aren't recursive, but I don't want to have to
+     recompute the target environment for each command.  Better would be to
+     keep a separate entry for MAKEFLAGS in the environment so it could be
+     replaced on its own.  For now just set it for all lines.
+   */
   if (child->environment == 0)
-    child->environment = target_environment (child->file, child->recursive);
+    child->environment = target_environment (child->file,
+                                             child->file->cmds->any_recurse);
 #endif
 
 #if !defined(__MSDOS__) && !defined(_AMIGA) && !defined(WINDOWS32)
@@ -1482,12 +1486,12 @@ start_job_command (struct child *child)
 
 #else
 
-      jobserver_pre_child (flags & COMMANDS_RECURSE);
+      jobserver_pre_child (ANY_SET (flags, COMMANDS_RECURSE));
 
       child->pid = child_execute_job ((struct childbase *)child,
                                       child->good_stdin, argv);
 
-      jobserver_post_child (flags & COMMANDS_RECURSE);
+      jobserver_post_child (ANY_SET (flags, COMMANDS_RECURSE));
 
 #endif /* !VMS */
     }
@@ -2604,6 +2608,11 @@ exec_command (char **argv, char **envp)
   if (errno == ENOENT)
     errno = ENOEXEC;
 
+# elif MK_OS_ZOS
+  /* In z/OS we can't set environ in ASCII mode. */
+  environ = envp;
+  execvpe(argv[0], argv, envp);
+
 # else
 
   /* Run the program.  Don't use execvpe() as we want the search for argv[0]
@@ -2654,7 +2663,7 @@ exec_command (char **argv, char **envp)
 # ifdef __EMX__
         if (!unixy_shell)
           {
-            new_argv[1] = "/c";
+            new_argv[1] = (char *)"/c";
             ++i;
             --argc;
           }
@@ -2671,6 +2680,9 @@ exec_command (char **argv, char **envp)
         pid = spawnvpe (P_NOWAIT, shell, new_argv, envp);
         if (pid >= 0)
           break;
+# elif MK_OS_ZOS
+        /* In z/OS we can't set environ in ASCII mode. */
+        execvpe(shell, new_argv, envp);
 # else
         execvp (shell, new_argv);
 # endif
@@ -2896,7 +2908,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
     return 0;
 
   if (shellflags == 0)
-    shellflags = posix_pedantic ? "-ec" : "-c";
+    shellflags = posix_pedantic && NONE_SET (flags, COMMANDS_NOERROR) ? "-ec" : "-c";
 
   /* See if it is safe to parse commands internally.  */
   if (shell == 0)
@@ -3280,7 +3292,13 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
 
 # ifdef __EMX__ /* is this necessary? */
     if (!unixy_shell && shellflags)
-      shellflags[0] = '/'; /* "/c" */
+      {
+        size_t len = strlen (shellflags);
+        char *shflags = alloca (len + 1);
+        memcpy (shflags, shellflags, len + 1);
+        shflags[0] = '/'; /* "/c" */
+        shellflags = shflags;
+      }
 # endif
 
     /* In .ONESHELL mode we are allowed to throw the entire current
@@ -3542,7 +3560,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
     /* Some shells do not work well when invoked as 'sh -c xxx' to run a
        command line (e.g. Cygnus GNUWIN32 sh.exe on W32 systems).  In these
        cases, run commands via a script file.  */
-    if (just_print_flag && !(flags & COMMANDS_RECURSE))
+    if (just_print_flag && NONE_SET (flags, COMMANDS_RECURSE))
       {
         /* Need to allocate new_argv, although it's unused, because
            start_job_command will want to free it and its 0'th element.  */
@@ -3603,9 +3621,9 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
         /* new_line is local, must not be freed therefore
            We use line here instead of new_line because we run the shell
            manually.  */
-        size_t line_len = strlen (line);
-        char *p = new_line;
         char *q = new_line;
+        line_len = strlen (line);
+        p = new_line;
         memcpy (new_line, line, line_len + 1);
         /* Replace all backslash-newline combination and also following tabs.
            Important: stop at the first '\n' because that's what the loop above
@@ -3714,6 +3732,7 @@ construct_command_argv (char *line, char **restp, struct file *file,
   char **argv;
 
   {
+    struct variable *var;
     /* Turn off --warn-undefined-variables while we expand SHELL and IFS.  */
     int save = warn_undefined_variables_flag;
     warn_undefined_variables_flag = 0;
@@ -3774,7 +3793,15 @@ construct_command_argv (char *line, char **restp, struct file *file,
     }
 #endif /* __EMX__ */
 
-    shellflags = allocated_variable_expand_for_file ("$(.SHELLFLAGS)", file);
+    var = lookup_variable_for_file (STRING_SIZE_TUPLE (".SHELLFLAGS"), file);
+    if (!var)
+      shellflags = xstrdup ("");
+    else if (posix_pedantic && var->origin == o_default)
+      /* In POSIX mode we default to -ec, unless we're ignoring errors.  */
+      shellflags = xstrdup (ANY_SET (cmd_flags, COMMANDS_NOERROR) ? "-c" : "-ec");
+    else
+      shellflags = allocated_variable_expand_for_file (var->value, file);
+
     ifs = allocated_variable_expand_for_file ("$(IFS)", file);
 
     warn_undefined_variables_flag = save;

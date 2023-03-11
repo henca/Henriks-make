@@ -1,6 +1,6 @@
 #                                                              -*-mode: perl-*-
 
-$description = "Test GNU make's archive management features.";
+$description = "Test GNU Make's archive management features.";
 
 $details = "\
 This only works on systems that support it.";
@@ -20,9 +20,7 @@ if ($osname eq 'VMS') {
     # objects when the test tampers with the timestamp.
     1 while unlink "$afile.c1";
     1 while unlink "$afile.o";
-    open (MYFILE, ">$afile.c1");
-    print MYFILE "int $afile(void) {return 1;}\n";
-    close MYFILE;
+    create_file("$afile.c1", "int $afile(void) {return 1;}\n");
     system("cc $afile.c1 /object=$afile.o");
   }
 } else {
@@ -37,16 +35,16 @@ $redir = '' if $osname eq 'VMS';
 
 # This is the value from src/default.c
 my $arflags = $osname eq 'aix' ? '-Xany -rv' : '-rv';
-my $arvar = "AR=$ar";
+my $arvar = "AR=\"$ar\"";
 
 # Newer versions of binutils can be built with --enable-deterministic-archives
 # which forces all timestamps (among other things) to always be 0, defeating
-# GNU make's archive support.  See if ar supports the U option to disable it.
+# GNU Make's archive support.  See if ar supports the U option to disable it.
 unlink('libxx.a');
 $_ = `$ar ${arflags}U libxx.a a1.o $redir`;
 if ($? == 0) {
     $arflags = "${arflags}U";
-    $arvar = "$arvar ARFLAGS=$arflags";
+    $arvar = "$arvar ARFLAGS=\"$arflags\"";
 }
 
 # Some versions of ar print different things on creation.  Find out.
@@ -214,7 +212,7 @@ if ($osname eq 'VMS') {
 # Check long names for archive members.
 # See Savannah bug #54395
 
-if ($osname ne 'VMS') {
+if ($osname ne 'VMS' && $osname ne 'os390') {
     my $pre = '1234567890123456';
     my $lib = 'libxx.a';
     my $cr = $created;
@@ -236,6 +234,49 @@ $pre%: ; touch \$\@
     run_make_test(undef, $arvar, "#MAKE#: Nothing to be done for 'default'.\n");
 
     unlink($lib);
+}
+
+# SV 61436 : Allow redefining archive rules to propagate timestamps
+
+# These don't work right on z/OS for some reason: archives not fully supported?
+
+if ($osname ne 'os390') {
+# Find the output when creating an archive from multiple files
+
+utouch(-10, 'a.o', 'b.o');
+my $create2 = `$ar $arflags mylib.a a.o b.o $redir`;
+touch('b.o');
+my $add2 = `$ar $arflags mylib.a b.o $redir`;
+unlink('a.o', 'b.o', 'mylib.a');
+
+# Some systems complain when compiling empty files
+create_file('a.c', 'int i;');
+create_file('b.c', 'int j;');
+utouch(-20, 'a.c', 'b.c');
+
+my $cc = get_config('CC') || 'cc';
+my $vars = "CC=\"$cc\" $arvar";
+
+run_make_test(q!
+mylib.a: mylib.a(a.o b.o)
+(%): % ;
+%.a: ; $(AR) $(ARFLAGS) $@ $?
+%.o : %.c ; @echo Compile $<; $(COMPILE.c) -o $@ $<
+!,
+              $vars, "Compile a.c\nCompile b.c\n$ar $arflags mylib.a a.o b.o\n${create2}rm b.o a.o");
+
+run_make_test(undef, $vars, "#MAKE#: 'mylib.a' is up to date.");
+
+# Now update one of the source files and it should be compiled and archived
+
+sleep(2);
+touch('b.c');
+
+run_make_test(undef, $vars, "Compile b.c\n$ar $arflags mylib.a b.o\n${add2}rm b.o");
+
+run_make_test(undef, $vars, "#MAKE#: 'mylib.a' is up to date.");
+
+unlink('a.c', 'b.c', 'a.o', 'b.o', 'mylib.a');
 }
 
 # This tells the test driver that the perl test script executed properly.

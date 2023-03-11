@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 #
-# Copyright (C) 1993-2022 Free Software Foundation, Inc.
+# Copyright (C) 1993-2023 Free Software Foundation, Inc.
 # This file is part of GNU Make.
 #
 # GNU Make is free software; you can redistribute it and/or modify it under
@@ -16,7 +16,7 @@
 # You should have received a copy of the GNU General Public License along with
 # this program.  If not, see <https://www.gnu.org/licenses/>.
 
-AC_INIT([GNU Make],[4.4.0.90],[bug-make@gnu.org])
+AC_INIT([GNU Make],[4.4.1],[bug-make@gnu.org])
 
 AC_PREREQ([2.69])
 
@@ -37,6 +37,8 @@ AM_INIT_AUTOMAKE([1.16.1 foreign -Werror -Wall])
 # Checks for programs.
 AC_USE_SYSTEM_EXTENSIONS
 AC_PROG_CC
+AC_PROG_CXX
+AC_DEFINE_UNQUOTED(MAKE_CXX, ["$CXX"], [Default C++ compiler.])
 
 # Configure gnulib
 gl_EARLY
@@ -64,9 +66,9 @@ AC_SEARCH_LIBS([getpwnam], [sun])
 AC_HEADER_DIRENT
 AC_HEADER_STAT
 
-AC_CHECK_HEADERS([stdlib.h locale.h unistd.h limits.h fcntl.h string.h \
+AC_CHECK_HEADERS([stdlib.h string.h strings.h locale.h unistd.h limits.h \
                   memory.h sys/param.h sys/resource.h sys/timeb.h sys/time.h \
-                  sys/select.h sys/file.h spawn.h])
+                  sys/select.h sys/file.h fcntl.h spawn.h])
 
 AM_PROG_CC_C_O
 AC_C_CONST
@@ -183,7 +185,7 @@ AS_IF([test "x$with_guile" != xno],
     CPPFLAGS="$CPPFLAGS $GUILE_CFLAGS"
     LIBS="$LIBS $GUILE_LIBS"
     AC_CHECK_HEADER([libguile.h],
-                    [AC_DEFINE([HAVE_GUILE], [1], [Embed GNU Guile support])],
+                    [have_guile=yes],
                     [have_guile=no],
                     [/* Avoid configuration error warnings. */])
     AS_IF([test "$have_guile" = yes],
@@ -207,6 +209,8 @@ guile_init (void *arg)
   ])
 ])
 
+AS_IF([test "$have_guile" = yes],
+      [AC_DEFINE([HAVE_GUILE], [1], [Embed GNU Guile support])])
 AM_CONDITIONAL([HAVE_GUILE], [test "$have_guile" = "yes"])
 
 AC_CHECK_DECLS([sys_siglist, _sys_siglist, __sys_siglist], , ,
@@ -318,7 +322,7 @@ AS_CASE([$host_os], [os2*|mingw*], [make_cv_job_server=yes])
 AS_CASE([/$make_cv_job_server/$user_job_server/],
   [*/no/*], [: no jobserver],
   [AC_DEFINE(MAKE_JOBSERVER, 1,
-             [Define to 1 to enable job server support in GNU make.])
+             [Define to 1 to enable job server support in GNU Make.])
   ])
 
 # If dl*() functions are supported we can enable the load operation
@@ -341,7 +345,7 @@ AS_IF([test "$make_cv_load" = yes], [
 AS_CASE([/$make_cv_load/$user_load/],
   [*/no/*], [make_cv_load=no],
   [AC_DEFINE(MAKE_LOAD, 1,
-             [Define to 1 to enable 'load' support in GNU make.])
+             [Define to 1 to enable 'load' support in GNU Make.])
   ])
 
 # If we want load support, we might need to link with export-dynamic.
@@ -349,14 +353,14 @@ AS_CASE([/$make_cv_load/$user_load/],
 # For example passing -rdynamic to the SunPRO linker gives a warning
 # but succeeds and creates a shared object, not an executable!
 AS_IF([test "$make_cv_load" = yes], [
-  AC_MSG_CHECKING([If the linker accepts -Wl,--export-dynamic])
+  AC_MSG_CHECKING([if the linker accepts -Wl,--export-dynamic])
   old_LDFLAGS="$LDFLAGS"
   LDFLAGS="$LDFLAGS -Wl,--export-dynamic"
   AC_LINK_IFELSE([AC_LANG_SOURCE([int main(){}])],
     [AC_MSG_RESULT([yes])
      AC_SUBST([AM_LDFLAGS], [-Wl,--export-dynamic])],
     [AC_MSG_RESULT([no])
-     AC_MSG_CHECKING([If the linker accepts -rdynamic])
+     AC_MSG_CHECKING([if the linker accepts -rdynamic])
      LDFLAGS="$old_LDFLAGS -rdynamic"
      AC_LINK_IFELSE([AC_LANG_SOURCE([int main(){}])],
        [AC_MSG_RESULT([yes])
@@ -471,6 +475,10 @@ AC_SUBST_FILE([MAINT_MAKEFILE])
 # Allow building with dmalloc
 AM_WITH_DMALLOC
 
+# Add custom header to config.h
+AH_BOTTOM([/* Include customized declarations.  */
+#include "../src/mkcustom.h"])
+
 # Forcibly disable SET_MAKE.  If it's set it breaks things like the test
 # scripts, etc.
 SET_MAKE=
@@ -490,7 +498,7 @@ AS_CASE([$with_customs],
 [ echo
   echo "WARNING: '$with_customs/lib' does not appear to contain the"
   echo "         Customs library.  You must build and install Customs"
-  echo "         before compiling GNU make."
+  echo "         before compiling GNU Make."
   echo
 ])])
 
@@ -498,7 +506,7 @@ AS_IF([test "x$has_wait_nohang" = xno],
 [ echo
   echo "WARNING: Your system has neither waitpid() nor wait3()."
   echo "         Without one of these, signal handling is unreliable."
-  echo "         You should be aware that running GNU make with -j"
+  echo "         You should be aware that running GNU Make with -j"
   echo "         could result in erratic behavior."
   echo
 ])

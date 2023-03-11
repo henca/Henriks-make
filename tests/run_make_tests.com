@@ -1,10 +1,10 @@
 $! Test_make.com
 $!
-$! This is a wrapper for the GNU make perl test programs on VMS.
+$! This is a wrapper for the GNU Make perl test programs on VMS.
 $!
 $! Parameter "-help" for description on how to use described below.
 $!
-$! Copyright (C) 2014-2022 Free Software Foundation, Inc.
+$! Copyright (C) 2014-2023 Free Software Foundation, Inc.
 $! This file is part of GNU Make.
 $!
 $! GNU Make is free software; you can redistribute it and/or modify it under
@@ -21,7 +21,7 @@ $! You should have received a copy of the GNU General Public License along with
 $! this program.  If not, see <https://www.gnu.org/licenses/>.
 $!
 $!
-$! Allow more than 8 paramters with using commas as a delimiter.
+$! Allow more than 8 parameters with using commas as a delimiter.
 $!
 $ params = "''p1',''p2',''p3',''p4',''p5',''p6',''p7',''p8'"
 $!

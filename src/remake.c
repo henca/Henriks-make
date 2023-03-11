@@ -1,5 +1,5 @@
 /* Basic dependency engine for GNU Make.
-Copyright (C) 1988-2022 Free Software Foundation, Inc.
+Copyright (C) 1988-2023 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -38,7 +38,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <io.h>
 #include <sys/stat.h>
 #if defined(_MSC_VER) && _MSC_VER > 1200
-/* VC7 or later supprots _stat64 to access 64-bit file size. */
+/* VC7 or later supports _stat64 to access 64-bit file size. */
 #define STAT _stat64
 #else
 #define STAT stat
@@ -109,6 +109,7 @@ check_also_make (const struct file *file)
 enum update_status
 update_goal_chain (struct goaldep *goaldeps)
 {
+  unsigned long last_cmd_count = 0;
   int t = touch_flag, q = question_flag, n = just_print_flag;
   enum update_status status = us_none;
 
@@ -134,9 +135,12 @@ update_goal_chain (struct goaldep *goaldeps)
 
       start_waiting_jobs ();
 
-      /* Wait for a child to die.  */
+      /* Check for exited children.  If no children have finished since the
+         last time we looked, then block until one exits.  If some have
+         exited don't block, so we can possibly do more work.  */
 
-      reap_children (1, 0);
+      reap_children (last_cmd_count == command_count, 0);
+      last_cmd_count = command_count;
 
       lastgoal = 0;
       gu = goals;
@@ -491,14 +495,15 @@ update_file_1 (struct file *file, unsigned int depth)
      fail. */
   file->no_diag = file->dontcare;
 
-  ++depth;
-
   /* Notice recursive update of the same file.  */
   start_updating (file);
 
   /* We might change file if we find a different one via vpath;
      remember this one to turn off updating.  */
   ofile = file;
+
+  /* Increase the depth for reporting how we build the file.  */
+  ++depth;
 
   /* Looking at the file's modtime beforehand allows the possibility
      that its name may be changed by a VPATH search, and thus it may
@@ -734,15 +739,17 @@ update_file_1 (struct file *file, unsigned int depth)
   finish_updating (file);
   finish_updating (ofile);
 
-  DBF (DB_VERBOSE, _("Finished prerequisites of target file '%s'.\n"));
+  /* We've decided what we need to do to build the file.  */
+  --depth;
 
   if (running)
     {
       set_command_state (file, cs_deps_running);
-      --depth;
       DBF (DB_VERBOSE, _("The prerequisites of '%s' are being made.\n"));
       return us_success;
     }
+
+  DBF (DB_VERBOSE, _("Finished prerequisites of target file '%s'.\n"));
 
   /* If any dependency failed, give up now.  */
 
@@ -751,8 +758,6 @@ update_file_1 (struct file *file, unsigned int depth)
       /* I'm not sure if we can't just assign dep_status...  */
       file->update_status = dep_status == us_none ? us_failed : dep_status;
       notice_finished_file (file);
-
-      --depth;
 
       DBF (DB_VERBOSE, _("Giving up on target file '%s'.\n"));
 
@@ -828,15 +833,12 @@ update_file_1 (struct file *file, unsigned int depth)
 
           if (fmt)
             {
-              print_spaces (depth);
+              print_spaces (depth+1);
               printf (fmt, dep_name (d), file->name);
               fflush (stdout);
             }
         }
     }
-
-  /* Here depth returns to the value it had when we were called.  */
-  depth--;
 
   if (file->double_colon && file->deps == 0)
     {
@@ -958,7 +960,7 @@ notice_finished_file (struct file *file)
              we don't want to do the touching.  */
           unsigned int i;
           for (i = 0; i < file->cmds->ncommand_lines; ++i)
-            if (!(file->cmds->lines_flags[i] & COMMANDS_RECURSE))
+            if (NONE_SET (file->cmds->lines_flags[i], COMMANDS_RECURSE))
               goto have_nonrecursing;
         }
       else
@@ -999,7 +1001,7 @@ notice_finished_file (struct file *file)
       if ((question_flag || just_print_flag || touch_flag) && file->cmds)
         {
           for (i = file->cmds->ncommand_lines; i > 0; --i)
-            if (! (file->cmds->lines_flags[i-1] & COMMANDS_RECURSE))
+            if (NONE_SET (file->cmds->lines_flags[i-1], COMMANDS_RECURSE))
               break;
         }
 
@@ -1084,7 +1086,6 @@ check_dep (struct file *file, unsigned int depth,
   struct dep *d;
   enum update_status dep_status = us_success;
 
-  ++depth;
   start_updating (file);
 
   /* We might change file if we find a different one via vpath;
@@ -1182,7 +1183,7 @@ check_dep (struct file *file, unsigned int depth,
 
               d->file->parent = file;
               maybe_make = *must_make_ptr;
-              new = check_dep (d->file, depth, this_mtime, &maybe_make);
+              new = check_dep (d->file, depth+1, this_mtime, &maybe_make);
               if (new > dep_status)
                 dep_status = new;
 
@@ -1341,13 +1342,16 @@ f_mtime (struct file *file, int search)
   if (ar_name (file->name))
     {
       /* This file is an archive-member reference.  */
-
+      FILE_TIMESTAMP memmtime;
       char *arname, *memname;
       struct file *arfile;
       time_t member_date;
 
       /* Find the archive's name.  */
       ar_parse_name (file->name, &arname, &memname);
+
+      /* Find the mtime of the member file (it might not exist).  */
+      memmtime = name_mtime (memname);
 
       /* Find the modification time of the archive itself.
          Also allow for its name to be changed via VPATH search.  */
@@ -1392,9 +1396,16 @@ f_mtime (struct file *file, int search)
         return NONEXISTENT_MTIME;
 
       member_date = ar_member_date (file->hname);
-      mtime = (member_date == (time_t) -1
-               ? NONEXISTENT_MTIME
-               : file_timestamp_cons (file->hname, member_date, 0));
+
+      if (member_date == (time_t) -1
+          || (memmtime != NONEXISTENT_MTIME
+              && (time_t) FILE_TIMESTAMP_S (memmtime) > member_date))
+        /* If the member file exists and is newer than the member in the
+           archive, pretend it's nonexistent.  This means the member file was
+           updated but not added to the archive yet.  */
+        mtime = NONEXISTENT_MTIME;
+      else
+        mtime = file_timestamp_cons (file->hname, member_date, 0);
     }
   else
 #endif
@@ -1467,14 +1478,6 @@ f_mtime (struct file *file, int search)
       FILE_TIMESTAMP adjustment = FAT_ADJ_OFFSET << FILE_TIMESTAMP_LO_BITS;
       if (ORDINARY_MTIME_MIN + adjustment <= adjusted_mtime)
         adjusted_mtime -= adjustment;
-#elif defined(__EMX__)
-      /* FAT filesystems round time to the nearest even second!
-         Allow for any file (NTFS or FAT) to perhaps suffer from this
-         brain damage.  */
-      FILE_TIMESTAMP adjustment = (((FILE_TIMESTAMP_S (adjusted_mtime) & 1) == 0
-                     && FILE_TIMESTAMP_NS (adjusted_mtime) == 0)
-                    ? (FILE_TIMESTAMP) 1 << FILE_TIMESTAMP_LO_BITS
-                    : 0);
 #endif
 
       /* If the file's time appears to be in the future, update our

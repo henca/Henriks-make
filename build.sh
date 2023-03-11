@@ -1,7 +1,7 @@
 #!/bin/sh
 # Shell script to build GNU Make in the absence of any 'make' program.
 
-# Copyright (C) 1993-2022 Free Software Foundation, Inc.
+# Copyright (C) 1993-2023 Free Software Foundation, Inc.
 # This file is part of GNU Make.
 #
 # GNU Make is free software; you can redistribute it and/or modify it under
@@ -42,19 +42,13 @@ defines="-DLOCALEDIR=\"$localedir\" -DLIBDIR=\"$libdir\" -DINCLUDEDIR=\"$include
 # Print the value to stdout.
 get_mk_var ()
 {
-  file=$1
-  var=$2
-
-  val=
-  v=$(sed -e :a -e '/\\$/N; s/\\\n//; ta' "$file" | sed -n "s=^ *$var *\= *==p")
+  v=$(sed -e :a -e '/\\$/N; s/\\\n//; ta' "$1" | sed -n "s=^ *$2 *\= *==p")
   for w in $v; do
     case $w in
-      (\$[\(\{]*[\)\}]) w=${w#\$[\(\{]}; w=$(get_mk_var "$file" "${w%[\)\}]}") ;;
+      (\$[\(\{]*[\)\}]) w=${w#\$[\(\{]}; (get_mk_var "$1" "${w%[\)\}]}") ;;
+      (*) echo "$w" ;;
     esac
-    val="${val:+$val }$w"
   done
-
-  printf '%s\n' "$val"
 }
 
 # Compile source files.  Object files are put into $objs.
