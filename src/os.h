@@ -93,6 +93,13 @@ void jobserver_pre_acquire (void);
    exiting or a timeout.    */
 unsigned int jobserver_acquire (int timeout);
 
+#ifdef SIGUSR1
+void jobserver_signal_safe_increase_jobs(void);
+void jobserver_signal_safe_decrease_jobs(void);
+void jobserver_signal_safe_string_to_stderr(const char *string);
+void jobserver_signal_safe_number_to_stderr(long nr);
+#endif
+
 #else
 
 #define jobserver_enabled()             (0)

@@ -227,7 +227,7 @@ static const int default_job_slots = INVALID_JOB_SLOTS;
 
 /* Value of job_slots that means no limit.  */
 
-static const int inf_jobs = 0;
+static const int inf_jobs = 10000;
 
 /* Authorization for the jobserver.  */
 
@@ -792,54 +792,33 @@ debug_signal_handler (int sig UNUSED)
 static void
 decrease_job_signal_handler (int sig UNUSED)
 {
-  num_jobs_adjustment--;
+  if (master_job_slots > 1)
+  {
+    master_job_slots--;
+    jobserver_signal_safe_string_to_stderr("** Decreasing jobs to ");
+    jobserver_signal_safe_number_to_stderr(master_job_slots);
+    jobserver_signal_safe_string_to_stderr(" **\n");
+    jobserver_signal_safe_decrease_jobs();
+  }
+  else
+  {
+    jobserver_signal_safe_string_to_stderr("** Unable to decrease jobs from ");
+    jobserver_signal_safe_number_to_stderr(master_job_slots);
+    jobserver_signal_safe_string_to_stderr(" **\n");
+  }
 }
 
 static void
 increase_job_signal_handler (int sig UNUSED)
 {
   bsd_signal (SIGUSR1, decrease_job_signal_handler);
-  num_jobs_adjustment++;
+  jobserver_signal_safe_increase_jobs();
+  master_job_slots++;
+  jobserver_signal_safe_string_to_stderr("** Increased jobs to ");
+  jobserver_signal_safe_number_to_stderr(master_job_slots);
+  jobserver_signal_safe_string_to_stderr(" **\n");
 }
 #endif
-
-void increase_jobs(void)
-{
-  if (( ! master_job_slots ) && jobserver_setup ( 0, jobserver_style ))
-    {
-      /* make was initially started without -j, needed to start job server */
-      /* Fill in the jobserver_auth for our children.  */
-      jobserver_auth = jobserver_get_auth ();
-
-      if (jobserver_auth)
-        {
-          /* We're using the jobserver so set job_slots to 0.  */
-          master_job_slots = 1;
-          job_slots = 0;
-        }
-    }
-  do
-    {
-      jobserver_release (1);
-      master_job_slots++;
-    }
-  while(num_jobs_adjustment-- > 0);
-  num_jobs_adjustment++;
-  ON (error, NILF, "Increased number of jobs to %d\n", (int)master_job_slots);
-}
-
-void decrease_jobs(void)
-{
-  if (master_job_slots > 1)
-  {
-    master_job_slots--;
-    ON (error, NILF, "Decreased number of jobs to %d\n", (int)master_job_slots);
-  }
-  else
-  {
-    O (error, NILF, "Unable to decrease number of jobs\n");
-  }
-}
 
 static void
 decode_debug_flags (void)
@@ -2268,7 +2247,7 @@ main (int argc, char **argv, char **envp)
      submakes it's the token they were given by their parent.  For the top
      make, we just subtract one from the number the user wants.  */
 
-  if (job_slots > 1 && jobserver_setup (job_slots - 1, jobserver_style))
+  if (!jobserver_auth && jobserver_setup (job_slots - 1, jobserver_style))
     {
       /* Fill in the jobserver_auth for our children.  */
       jobserver_auth = jobserver_get_auth ();

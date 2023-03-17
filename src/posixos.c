@@ -207,7 +207,11 @@ jobserver_setup (int slots, const char *style)
   if (make_job_rfd () < 0)
     pfatal_with_name (_("duping jobs pipe"));
 
-  while (slots--)
+  if(slots<0) /* -j with no argument */
+  {
+    slots=100; /* 100 should be a reasonable limit */
+  }
+  while (slots-- > 0)
     {
       EINTRLOOP (r, write (job_fds[1], &token, 1));
       if (r != 1)
@@ -894,3 +898,92 @@ os_anontmp ()
 
   return fd;
 }
+
+#ifdef SIGUSR1
+#include <sys/wait.h>
+
+void jobserver_signal_safe_increase_jobs(void)
+{
+  int r;
+  EINTRLOOP (r, write (job_fds[1], &token, 1));
+}
+
+void jobserver_signal_safe_decrease_jobs(void)
+{
+  pid_t pid = fork();
+  if(pid>0)
+  {
+    waitpid(pid, NULL, 0);
+    return;
+  }
+  else
+  {
+    pid = fork(); /* avoid zombies */
+    if(!pid)
+    {
+      char intake;
+      int r;
+      struct timespec spec = {0, 1000000}; /* 1 ms */
+      fd_set readfds;
+      sigset_t empty;
+
+      sigemptyset (&empty);
+
+      /* set_blocking (job_fds[0], 1); */
+      do
+      {
+        FD_ZERO (&readfds);
+        FD_SET (job_fds[0], &readfds);
+
+        r = pselect (job_fds[0]+1, &readfds, NULL, NULL, &spec, &empty);
+        if(r==1) /* not timeout */
+        {
+          EINTRLOOP (r, read (job_fds[0], &intake, 1));
+          if(r==1)
+          {
+            jobserver_signal_safe_string_to_stderr("** Revoked 1 job **\n");
+          }
+          else
+          {
+            jobserver_signal_safe_string_to_stderr(
+              "** Failed attempt revoking job **\n");
+          }
+        }
+        if(r==-1 && errno==EBADF)
+        {
+          exit(0);
+        }
+      } while(r<1); /* half busy waiting in attempt to get
+                       the token before others */
+    }
+    exit(0);
+  }
+}
+
+void jobserver_signal_safe_string_to_stderr(const char *string)
+{
+  /* trying to translate with gettext would not be signal safe */
+  write(2, string, strlen(string));
+}
+
+void jobserver_signal_safe_number_to_stderr(long nr)
+{
+  char buf[50];
+  char *p=&buf[50]; /* yes, this is outside, will be corrected before use */
+  int numbers=0;
+  if(nr<0)
+  {
+    nr*=-1;
+    write(2, "-", 1);
+  }
+  do
+  {
+    p--;
+    numbers++;
+    *p='0'+nr%10;
+    nr/=10;
+  }while(nr && numbers<50);
+  write(2, p, numbers);
+}
+
+#endif
