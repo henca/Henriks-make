@@ -207,9 +207,9 @@ jobserver_setup (int slots, const char *style)
   if (make_job_rfd () < 0)
     pfatal_with_name (_("duping jobs pipe"));
 
-  if(slots<0) /* -j with no argument */
+  if(slots<0) /* this should not happen */
   {
-    slots=100; /* 100 should be a reasonable limit */
+    slots=2; /* some reasonable value */
   }
   while (slots-- > 0)
     {

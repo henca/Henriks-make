@@ -28,10 +28,6 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "dep.h"
 #include "shuffle.h"
 
-/* These functions are in main.c, there is no main.h */
-extern void increase_jobs(void);
-extern void decrease_jobs(void);
-
 /* Default shell to use.  */
 #ifdef WINDOWS32
 # include <windows.h>
