@@ -227,7 +227,7 @@ static const int default_job_slots = INVALID_JOB_SLOTS;
 
 /* Value of job_slots that means no limit.  */
 
-static const int inf_jobs = 10000;
+static const int inf_jobs = 3;
 
 /* Authorization for the jobserver.  */
 
