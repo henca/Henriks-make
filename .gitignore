@@ -36,6 +36,7 @@ configure
 /mk/Posix.mk
 stamp-*
 .dirstamp
+gnulib
 *.sed
 
 # Build artifacts
